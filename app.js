@@ -34,6 +34,7 @@
     folderList: $("folder-list"), folderEmpty: $("folder-empty"),
     tracksTitle: $("tracks-title"), tracksCount: $("tracks-count"),
     trackList: $("track-list"), tracksEmpty: $("tracks-empty"),
+    libQ: $("lib-q"), searchEmpty: $("search-empty"),
     player: $("player"), npTitle: $("np-title"), npSub: $("np-sub"), npLoading: $("np-loading"),
     tCur: $("t-cur"), tDur: $("t-dur"), seek: $("seek"),
     btnShuffle: $("btn-shuffle"), btnPrev: $("btn-prev"), btnPlay: $("btn-play"),
@@ -285,6 +286,7 @@
 
   // ── 재생목록 화면 ──────────────────────────────────────────
   async function openFolder(folder) {
+    if (!state.folder || state.folder.id !== folder.id) el.libQ.value = "";   // 다른 폴더로 가면 검색어 비움 (새로고침은 유지)
     state.folder = folder;
     store.set("folder", folder);
     show(el.sTracks);
@@ -293,6 +295,7 @@
     el.tracksCount.textContent = "";
     el.trackList.innerHTML = `<div class="empty"><span class="spinner"></span> 음악 찾는 중…</div>`;
     el.tracksEmpty.classList.add("hidden");
+    el.searchEmpty.classList.add("hidden");
     showTab("lib");
     try {
       const tracks = await listAudioIn(folder);
@@ -354,11 +357,16 @@
     return b;
   }
 
+  // 검색: 보기만 거름. 번호(i)는 전체 곡 기준 그대로라 눌러도 전체 곡 큐에서 재생됨
+  const norm = (s) => (s || "").normalize("NFC").toLowerCase().replace(/\s+/g, "");
   function renderTracks() {
     el.trackList.innerHTML = "";
     const cur = currentTrack();
-    let lastFolder = null;
+    const q = norm(el.libQ.value);
+    let lastFolder = null, shown = 0;
     state.library.forEach((t, i) => {
+      if (q && !norm(t.title).includes(q) && !norm(t.folderName).includes(q)) return;
+      shown++;
       if (CFG.INCLUDE_SUBFOLDERS && t.folderName !== lastFolder && t.folderName !== state.folder.name) {
         const h = document.createElement("div");
         h.className = "sectionhead"; h.style.marginTop = "14px";
@@ -374,6 +382,9 @@
         onAdd: () => openSheet(t),
       }));
     });
+    const n = state.library.length;
+    el.tracksCount.textContent = !n ? "" : q ? `${shown} / ${n}곡` : `${n}곡`;
+    el.searchEmpty.classList.toggle("hidden", !(q && n && !shown));
   }
 
   function markPlayingRow() {
@@ -807,6 +818,8 @@
   el.btnRefresh.onclick = () => state.folder && openFolder(state.folder);
   el.btnFolderSearch.onclick = searchFolders;
   el.folderQ.addEventListener("keydown", (e) => { if (e.key === "Enter") searchFolders(); });
+  el.libQ.addEventListener("input", renderTracks);
+  el.libQ.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { if (e.key === "Escape") { el.libQ.value = ""; renderTracks(); } el.libQ.blur(); } });
   el.btnPlay.onclick = togglePlay;
   el.btnNext.onclick = next;
   el.btnPrev.onclick = prev;

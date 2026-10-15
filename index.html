@@ -256,12 +256,16 @@
 
     <!-- 탭 1: 폴더의 전체 곡 -->
     <div id="view-lib">
+      <div class="searchrow">
+        <input id="lib-q" type="search" placeholder="곡 찾기 (제목·폴더 이름)" autocomplete="off" enterkeyhint="search" />
+      </div>
       <div class="sectionhead">
         <h2 id="tracks-title">재생목록</h2>
         <span class="count" id="tracks-count"></span>
       </div>
       <div class="list" id="track-list"></div>
       <div class="empty hidden" id="tracks-empty">이 폴더엔 음악 파일이 없어요.<br><small>mp3, m4a, flac, wav, ogg, aac 파일을 찾습니다.</small></div>
+      <div class="empty hidden" id="search-empty">찾는 곡이 없어요.<br><small>다른 글자로 찾아보거나, 칸을 비우면 전체 곡이 다시 보여요.</small></div>
     </div>
 
     <!-- 탭 2: 플레이리스트 목록 -->
