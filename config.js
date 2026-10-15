@@ -5,7 +5,7 @@
 //  그걸 아래 따옴표 안에 붙여넣으세요.
 // ─────────────────────────────────────────────────────────────
 window.APP_CONFIG = {
-  CLIENT_ID: "여기에_클라이언트_ID_붙여넣기.apps.googleusercontent.com",
+  CLIENT_ID: "656080072686-v85232qevre1rnecpmtju7cdt1gii1f8.apps.googleusercontent.com",
 
   // 드라이브에서 기본으로 열 폴더 이름 (비워두면 로그인 후 직접 고릅니다)
   DEFAULT_FOLDER_NAME: "",

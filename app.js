@@ -7,16 +7,28 @@
   "use strict";
 
   const CFG = window.APP_CONFIG || {};
-  const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+  // drive.readonly: 음악 읽기 / drive.file: 이 앱이 만든 파일(플레이리스트 .md)만 쓰기
+  const SCOPE = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file";
   const API = "https://www.googleapis.com/drive/v3";
+  const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
+  const PL_FILE = "drive-music-playlists.md";   // 드라이브에 저장되는 플레이리스트 파일
+  const FAV = "즐겨찾기";                         // ♥ 누르면 들어가는 기본 플레이리스트
   const AUDIO_EXT = ["mp3", "m4a", "flac", "wav", "ogg", "aac", "opus", "wma", "aiff"];
 
   // ── 화면 요소 ──────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
   const el = {
     hdrSub: $("hdr-sub"),
-    btnFolder: $("btn-folder"), btnRefresh: $("btn-refresh"), btnLogout: $("btn-logout"),
-    sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"),
+    btnBack: $("btn-back"), btnFolder: $("btn-folder"), btnRefresh: $("btn-refresh"), btnLogout: $("btn-logout"),
+    sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"),
+    tabLib: $("tab-lib"), tabPl: $("tab-pl"), viewLib: $("view-lib"), viewPl: $("view-pl"),
+    plList: $("pl-list"), plEmpty: $("pl-empty"), plSync: $("pl-sync"), plNewName: $("pl-new-name"), btnPlNew: $("btn-pl-new"),
+    plTitle: $("pl-title"), plCount: $("pl-count"), plTracks: $("pl-tracks"), plTracksEmpty: $("pl-tracks-empty"),
+    btnPlPlay: $("btn-pl-play"), btnPlShuffle: $("btn-pl-shuffle"), btnPlEdit: $("btn-pl-edit"),
+    btnPlRename: $("btn-pl-rename"), btnPlDelete: $("btn-pl-delete"),
+    dim: $("dim"), sheet: $("sheet"), sheetTrack: $("sheet-track"), sheetList: $("sheet-list"),
+    sheetNewName: $("sheet-new-name"), btnSheetNew: $("btn-sheet-new"), toast: $("toast"),
+    btnFav: $("btn-fav"), icFavOff: $("ic-fav-off"), icFavOn: $("ic-fav-on"),
     btnLogin: $("btn-login"), loginNotice: $("login-notice"),
     folderQ: $("folder-q"), btnFolderSearch: $("btn-folder-search"),
     folderList: $("folder-list"), folderEmpty: $("folder-empty"),
@@ -35,7 +47,15 @@
     token: null,          // { access_token, expires_at }
     tokenClient: null,
     folder: null,         // { id, name }
-    tracks: [],           // [{ id, name, title, size, mimeType, folderName }]
+    library: [],          // 폴더에서 긁어온 전체 곡 [{ id, name, title, size, mimeType, folderName }]
+    tracks: [],           // 지금 "재생 중인 출처"의 곡들 (전체 곡 또는 플레이리스트 하나)
+    source: { type: "library" },   // { type:"library" } | { type:"playlist", name }
+    playlists: [],        // [{ name, items: [{ id, title, folderName }] }]
+    plFileId: null,       // 드라이브에 있는 플레이리스트 파일 id
+    plDirty: false, plSaveTimer: null,
+    openPl: null,         // 상세 화면에 열린 플레이리스트 이름
+    plEditing: false,
+    sheetTrack: null,     // 바텀시트에 올라온 곡
     order: [],            // 재생 순서 (인덱스 배열) — 섞기면 섞인 순서
     pos: -1,              // order 안에서의 현재 위치
     shuffle: false,
@@ -67,12 +87,18 @@
   const stripExt = (n) => n.replace(/\.[^.]+$/, "");
   const isAudioName = (n) => AUDIO_EXT.includes((n.split(".").pop() || "").toLowerCase());
   const show = (screen) => {
-    for (const s of [el.sLogin, el.sFolder, el.sTracks]) s.classList.toggle("show", s === screen);
+    for (const s of [el.sLogin, el.sFolder, el.sTracks, el.sPl]) s.classList.toggle("show", s === screen);
     const signedIn = screen !== el.sLogin;
-    el.btnFolder.classList.toggle("hidden", !signedIn);
+    el.btnBack.classList.toggle("hidden", screen !== el.sPl);
+    el.btnFolder.classList.toggle("hidden", !signedIn || screen === el.sPl);
     el.btnRefresh.classList.toggle("hidden", screen !== el.sTracks);
-    el.btnLogout.classList.toggle("hidden", !signedIn);
+    el.btnLogout.classList.toggle("hidden", !signedIn || screen === el.sPl);
     window.scrollTo(0, 0);
+  };
+  let toastTimer = null;
+  const toast = (msg) => {
+    el.toast.textContent = msg; el.toast.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.toast.classList.remove("show"), 1800);
   };
   const notice = (msg, ok = false) => {
     el.loginNotice.textContent = msg;
@@ -141,11 +167,13 @@
     state.token = null;
     sessionStorage.removeItem("dm:token");
     stopPlayback();
+    state.playlists = []; state.plFileId = null; state.library = [];
     show(el.sLogin);
     notice("로그아웃했어요.", true);
   }
 
   async function afterLogin() {
+    loadPlaylists().catch((e) => { el.plSync.textContent = "불러오기 실패"; console.warn(e); });
     const saved = store.get("folder", null);
     if (saved && saved.id) {
       await openFolder(saved);
@@ -161,7 +189,7 @@
   // ── 드라이브 API ───────────────────────────────────────────
   async function driveFetch(path, params = {}, opts = {}) {
     const token = await getToken();
-    const url = new URL(API + path);
+    const url = new URL((opts.upload ? UPLOAD_API : API) + path);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     let res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + token } });
     if (res.status === 401) { // 열쇠가 만료됐으면 한 번 더
@@ -265,37 +293,72 @@
     el.tracksCount.textContent = "";
     el.trackList.innerHTML = `<div class="empty"><span class="spinner"></span> 음악 찾는 중…</div>`;
     el.tracksEmpty.classList.add("hidden");
+    showTab("lib");
     try {
       const tracks = await listAudioIn(folder);
-      setTracks(tracks);
+      setLibrary(tracks);
     } catch (e) {
       el.trackList.innerHTML = `<div class="notice">목록을 못 불러왔어요: ${e.message}</div>`;
     }
   }
 
-  function setTracks(tracks) {
+  function setLibrary(tracks) {
     // 이전에 받아둔 파일은 비움
     for (const u of state.blobUrls.values()) URL.revokeObjectURL(u);
     state.blobUrls.clear();
-    state.tracks = tracks;
-    rebuildOrder();
-    renderTracks();
+    state.library = tracks;
     el.tracksCount.textContent = tracks.length ? `${tracks.length}곡` : "";
     el.tracksEmpty.classList.toggle("hidden", tracks.length > 0);
 
-    // 지난번 듣던 곡이 있으면 그 자리로 (자동 재생은 안 함 — 폰 브라우저가 막음)
-    const last = store.get("last:" + state.folder.id, null);
-    if (last && tracks.length) {
-      const i = tracks.findIndex((t) => t.id === last.id);
-      if (i >= 0) { state.pos = state.order.indexOf(i); showNowPlaying(tracks[i]); el.player.classList.add("show"); }
+    // 출처를 전체 곡으로 — 플레이리스트를 듣던 중이면 그대로 둠
+    if (state.source.type === "library" || !state.tracks.length) {
+      state.source = { type: "library" };
+      state.tracks = tracks;
+      rebuildOrder();
+      // 지난번 듣던 곡이 있으면 그 자리로 (자동 재생은 안 함 — 폰 브라우저가 막음)
+      const last = store.get("last:" + state.folder.id, null);
+      if (last && tracks.length) {
+        const i = tracks.findIndex((t) => t.id === last.id);
+        if (i >= 0) { state.pos = state.order.indexOf(i); showNowPlaying(tracks[i]); el.player.classList.add("show"); }
+      }
     }
+    renderTracks();
+  }
+
+  // 출처(전체 곡 / 플레이리스트)를 바꿔서 재생 큐를 새로 만듦
+  function setQueue(source, tracks) {
+    state.source = source;
+    state.tracks = tracks;
+    state.pos = -1;
+    rebuildOrder();
+  }
+
+  // 곡 한 줄 (전체 곡·플레이리스트·바텀시트가 같이 씀)
+  const SVG_NOTE = `<svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>`;
+  const SVG_PLUS = `<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
+  function trackRow(t, i, { playing, onPlay, onAdd, sub }) {
+    const b = document.createElement("div");
+    b.className = "row" + (playing ? " playing" : "");
+    b.dataset.id = t.id;
+    b.innerHTML = `<span class="num">${i + 1}</span>
+      <div class="ic">${SVG_NOTE}</div>
+      <button class="t" style="text-align:left;flex:1;min-width:0;padding:0"><div class="n"></div><div class="s"></div></button>`;
+    b.querySelector(".n").textContent = t.title;
+    b.querySelector(".s").textContent = sub;
+    b.querySelector(".t").onclick = onPlay;
+    if (onAdd) {
+      const a = document.createElement("button");
+      a.className = "act add"; a.title = "플레이리스트에 담기"; a.innerHTML = SVG_PLUS; a.onclick = onAdd;
+      b.appendChild(a);
+    }
+    return b;
   }
 
   function renderTracks() {
     el.trackList.innerHTML = "";
     const cur = currentTrack();
     let lastFolder = null;
-    state.tracks.forEach((t, i) => {
+    state.library.forEach((t, i) => {
       if (CFG.INCLUDE_SUBFOLDERS && t.folderName !== lastFolder && t.folderName !== state.folder.name) {
         const h = document.createElement("div");
         h.className = "sectionhead"; h.style.marginTop = "14px";
@@ -304,22 +367,269 @@
         el.trackList.appendChild(h);
       }
       lastFolder = t.folderName;
-      const b = document.createElement("button");
-      b.className = "row" + (cur && cur.id === t.id ? " playing" : "");
-      b.dataset.id = t.id;
-      b.innerHTML = `<span class="num">${i + 1}</span>
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg></div>
-        <div class="t"><div class="n"></div><div class="s"></div></div>`;
-      b.querySelector(".n").textContent = t.title;
-      b.querySelector(".s").textContent = fmtSize(t.size);
-      b.onclick = () => playIndex(i);
-      el.trackList.appendChild(b);
+      el.trackList.appendChild(trackRow(t, i, {
+        playing: !!cur && cur.id === t.id,
+        sub: fmtSize(t.size),
+        onPlay: () => { if (state.source.type !== "library") setQueue({ type: "library" }, state.library); playIndex(i); },
+        onAdd: () => openSheet(t),
+      }));
     });
   }
 
   function markPlayingRow() {
     const cur = currentTrack();
-    for (const r of el.trackList.querySelectorAll(".row")) r.classList.toggle("playing", !!cur && r.dataset.id === cur.id);
+    for (const r of document.querySelectorAll("#track-list .row, #pl-tracks .row")) r.classList.toggle("playing", !!cur && r.dataset.id === cur.id);
+    updateFavUI();
+  }
+
+  // ── 탭 ─────────────────────────────────────────────────────
+  function showTab(which) {
+    el.tabLib.classList.toggle("on", which === "lib");
+    el.tabPl.classList.toggle("on", which === "pl");
+    el.viewLib.classList.toggle("hidden", which !== "lib");
+    el.viewPl.classList.toggle("hidden", which !== "pl");
+    if (which === "pl") renderPlaylistList();
+  }
+
+  // ── 플레이리스트: 드라이브의 .md 파일로 저장 ─────────────────
+  //  파일 모양:
+  //  # Drive Music 플레이리스트
+  //  ## 출근길
+  //  - 곡 제목 | 드라이브파일ID | 폴더이름
+  function serializePlaylists() {
+    const lines = ["# Drive Music 플레이리스트", "", "<!-- 이 파일은 Drive Music 앱이 관리합니다. 직접 고쳐도 되지만 줄 모양(- 제목 | 파일ID | 폴더)은 지켜주세요. -->", ""];
+    for (const p of state.playlists) {
+      lines.push(`## ${p.name}`, "");
+      for (const it of p.items) lines.push(`- ${it.title.replace(/\|/g, "∣")} | ${it.id} | ${(it.folderName || "").replace(/\|/g, "∣")}`);
+      lines.push("");
+    }
+    return lines.join("\n");
+  }
+  function parsePlaylists(text) {
+    const out = []; let cur = null;
+    for (const raw of (text || "").split(/\r?\n/)) {
+      const line = raw.trim();
+      const h = line.match(/^##\s+(.+)$/);
+      if (h) { cur = { name: h[1].trim(), items: [] }; out.push(cur); continue; }
+      const m = line.match(/^-\s+(.*?)\s*\|\s*([A-Za-z0-9_-]{10,})\s*(?:\|\s*(.*))?$/);
+      if (m && cur) cur.items.push({ title: m[1], id: m[2], folderName: (m[3] || "").trim() });
+    }
+    return out;
+  }
+
+  async function loadPlaylists() {
+    // 먼저 이 기기에 남은 복사본으로 바로 보여주고, 드라이브 것으로 덮어씀
+    state.playlists = store.get("playlists", []);
+    el.plSync.innerHTML = `<span class="spinner"></span>`;
+    const res = await driveFetch("/files", {
+      q: `name = '${PL_FILE}' and trashed = false`, fields: "files(id, name, modifiedTime)", spaces: "drive", pageSize: "1",
+    });
+    const j = await res.json();
+    if (j.files && j.files.length) {
+      state.plFileId = j.files[0].id;
+      const r2 = await driveFetch(`/files/${state.plFileId}`, { alt: "media" });
+      state.playlists = parsePlaylists(await r2.text());
+      store.set("playlists", state.playlists);
+    }
+    el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
+    if (!el.viewPl.classList.contains("hidden")) renderPlaylistList();
+    if (state.openPl) renderPlaylistDetail();
+    updateFavUI();
+  }
+
+  function savePlaylists() {
+    store.set("playlists", state.playlists);
+    state.plDirty = true;
+    el.plSync.textContent = "저장 중…";
+    clearTimeout(state.plSaveTimer);
+    state.plSaveTimer = setTimeout(flushPlaylists, 1200);  // 연달아 고칠 때 한 번만 올림
+  }
+  async function flushPlaylists() {
+    if (!state.plDirty) return;
+    state.plDirty = false;
+    try {
+      const body = serializePlaylists();
+      if (state.plFileId) {
+        await driveFetch(`/files/${state.plFileId}`, { uploadType: "media" },
+          { method: "PATCH", upload: true, headers: { "Content-Type": "text/markdown" }, body });
+      } else {
+        const meta = { name: PL_FILE, mimeType: "text/markdown" };
+        const boundary = "dm" + Date.now();
+        const multipart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n` +
+          `--${boundary}\r\nContent-Type: text/markdown\r\n\r\n${body}\r\n--${boundary}--`;
+        const res = await driveFetch("/files", { uploadType: "multipart", fields: "id" },
+          { method: "POST", upload: true, headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body: multipart });
+        state.plFileId = (await res.json()).id;
+      }
+      el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
+    } catch (e) {
+      state.plDirty = true;
+      el.plSync.textContent = "저장 실패 — 다시 시도함";
+      setTimeout(flushPlaylists, 5000);
+    }
+  }
+  window.addEventListener("pagehide", () => { if (state.plDirty) flushPlaylists(); });
+
+  // ── 플레이리스트: 고치기 ────────────────────────────────────
+  const getPl = (name) => state.playlists.find((p) => p.name === name);
+  function createPlaylist(name) {
+    name = (name || "").trim();
+    if (!name) return null;
+    if (getPl(name)) { toast("같은 이름이 이미 있어요"); return getPl(name); }
+    const p = { name, items: [] };
+    state.playlists.push(p);
+    savePlaylists();
+    return p;
+  }
+  function addToPlaylist(name, t) {
+    const p = getPl(name) || createPlaylist(name);
+    if (!p) return;
+    if (p.items.some((it) => it.id === t.id)) return;
+    p.items.push({ id: t.id, title: t.title, folderName: t.folderName || "" });
+    savePlaylists();
+  }
+  function removeFromPlaylist(name, id) {
+    const p = getPl(name); if (!p) return;
+    p.items = p.items.filter((it) => it.id !== id);
+    savePlaylists();
+  }
+  const inPlaylist = (name, id) => { const p = getPl(name); return !!p && p.items.some((it) => it.id === id); };
+
+  // 플레이리스트 항목 → 재생할 곡 (라이브러리에 있으면 그 정보를, 없으면 저장된 정보로)
+  const plItemsToTracks = (p) => p.items.map((it) => state.library.find((t) => t.id === it.id) ||
+    ({ id: it.id, name: it.title, title: it.title, size: 0, mimeType: "audio/", folderName: it.folderName }));
+
+  // ── 플레이리스트: 목록 화면(탭) ─────────────────────────────
+  const SVG_PL = `<svg viewBox="0 0 24 24"><path d="M3 10h11v2H3v-2zm0-4h11v2H3V6zm0 8h7v2H3v-2zm12-2v8l6-4-6-4z"/></svg>`;
+  const SVG_HEART = `<svg viewBox="0 0 24 24"><path d="m12 21.35-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`;
+  function renderPlaylistList() {
+    el.plList.innerHTML = "";
+    el.plEmpty.classList.toggle("hidden", state.playlists.length > 0);
+    for (const p of state.playlists) {
+      const b = document.createElement("button");
+      b.className = "row";
+      const isFav = p.name === FAV;
+      b.innerHTML = `<div class="ic ${isFav ? "fav" : "pl"}">${isFav ? SVG_HEART : SVG_PL}</div>
+        <div class="t"><div class="n"></div><div class="s"></div></div>`;
+      b.querySelector(".n").textContent = p.name;
+      b.querySelector(".s").textContent = `${p.items.length}곡` + (state.source.type === "playlist" && state.source.name === p.name ? " · 재생 중" : "");
+      b.onclick = () => openPlaylist(p.name);
+      el.plList.appendChild(b);
+    }
+  }
+
+  // ── 플레이리스트: 상세 화면 ─────────────────────────────────
+  function openPlaylist(name) {
+    state.openPl = name; state.plEditing = false;
+    show(el.sPl);
+    el.hdrSub.textContent = "";
+    renderPlaylistDetail();
+  }
+  function closePlaylist() {
+    state.openPl = null; state.plEditing = false;
+    show(el.sTracks);
+    el.hdrSub.textContent = state.folder ? state.folder.name : "";
+    showTab("pl");
+  }
+  const SVG_UP = `<svg viewBox="0 0 24 24"><path d="m7.41 15.41 4.59-4.58 4.59 4.58L18 14l-6-6-6 6z"/></svg>`;
+  const SVG_DOWN = `<svg viewBox="0 0 24 24"><path d="m7.41 8.59 4.59 4.58 4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
+  const SVG_X = `<svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`;
+  function renderPlaylistDetail() {
+    const p = getPl(state.openPl);
+    if (!p) { closePlaylist(); return; }
+    el.plTitle.textContent = p.name;
+    el.plCount.textContent = p.items.length ? `${p.items.length}곡` : "";
+    el.plTracksEmpty.classList.toggle("hidden", p.items.length > 0);
+    el.sPl.classList.toggle("editing", state.plEditing);
+    el.btnPlEdit.classList.toggle("on", state.plEditing);
+    el.btnPlEdit.lastChild.textContent = state.plEditing ? "완료" : "편집";
+    el.btnPlRename.classList.toggle("hidden", !state.plEditing);
+    el.btnPlDelete.classList.toggle("hidden", !state.plEditing);
+    el.btnPlPlay.disabled = el.btnPlShuffle.disabled = !p.items.length;
+
+    el.plTracks.innerHTML = "";
+    const cur = currentTrack();
+    const tracks = plItemsToTracks(p);
+    tracks.forEach((t, i) => {
+      const inLib = state.library.some((x) => x.id === t.id);
+      const row = trackRow(t, i, {
+        playing: !!cur && cur.id === t.id && state.source.type === "playlist" && state.source.name === p.name,
+        sub: t.folderName || (inLib ? "" : "다른 폴더의 곡"),
+        onPlay: () => { if (state.plEditing) return; setQueue({ type: "playlist", name: p.name }, plItemsToTracks(p)); playIndex(i); },
+      });
+      const h = document.createElement("div");
+      h.className = "handle";
+      const mk = (svg, title, fn) => { const b = document.createElement("button"); b.innerHTML = svg; b.title = title; b.onclick = fn; return b; };
+      h.appendChild(mk(SVG_UP, "위로", () => { if (i > 0) { [p.items[i - 1], p.items[i]] = [p.items[i], p.items[i - 1]]; savePlaylists(); renderPlaylistDetail(); } }));
+      h.appendChild(mk(SVG_DOWN, "아래로", () => { if (i < p.items.length - 1) { [p.items[i + 1], p.items[i]] = [p.items[i], p.items[i + 1]]; savePlaylists(); renderPlaylistDetail(); } }));
+      h.appendChild(mk(SVG_X, "빼기", () => { removeFromPlaylist(p.name, t.id); renderPlaylistDetail(); }));
+      row.appendChild(h);
+      el.plTracks.appendChild(row);
+    });
+  }
+  function playPlaylist(shuffle) {
+    const p = getPl(state.openPl);
+    if (!p || !p.items.length) return;
+    if (state.shuffle !== shuffle) { state.shuffle = shuffle; store.set("shuffle", shuffle); el.btnShuffle.classList.toggle("active", shuffle); }
+    setQueue({ type: "playlist", name: p.name }, plItemsToTracks(p));
+    state.pos = 0; playCurrent();
+  }
+  function renamePlaylist() {
+    const p = getPl(state.openPl); if (!p) return;
+    const name = (prompt("새 이름", p.name) || "").trim();
+    if (!name || name === p.name) return;
+    if (getPl(name)) { toast("같은 이름이 이미 있어요"); return; }
+    p.name = name; state.openPl = name;
+    if (state.source.type === "playlist") state.source.name = name;
+    savePlaylists(); renderPlaylistDetail();
+  }
+  function deletePlaylist() {
+    const p = getPl(state.openPl); if (!p) return;
+    if (!confirm(`"${p.name}" 플레이리스트를 지울까요? (곡 파일은 그대로 남아요)`)) return;
+    state.playlists = state.playlists.filter((x) => x !== p);
+    if (state.source.type === "playlist" && state.source.name === p.name) setQueue({ type: "library" }, state.library);
+    savePlaylists(); closePlaylist();
+  }
+
+  // ── 플레이리스트에 담기 (바텀시트) ──────────────────────────
+  const SVG_CHECK = `<svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
+  function openSheet(t) {
+    state.sheetTrack = t;
+    el.sheetTrack.textContent = t.title;
+    renderSheet();
+    el.dim.classList.add("show"); el.sheet.classList.add("show");
+  }
+  function closeSheet() { el.dim.classList.remove("show"); el.sheet.classList.remove("show"); state.sheetTrack = null; }
+  function renderSheet() {
+    const t = state.sheetTrack; if (!t) return;
+    el.sheetList.innerHTML = "";
+    const names = [FAV, ...state.playlists.map((p) => p.name).filter((n) => n !== FAV)];
+    for (const name of names) {
+      const on = inPlaylist(name, t.id);
+      const b = document.createElement("button");
+      b.className = "row" + (on ? " on" : "");
+      b.innerHTML = `<div class="chk">${SVG_CHECK}</div><div class="t"><div class="n"></div><div class="s"></div></div>`;
+      b.querySelector(".n").textContent = name;
+      const p = getPl(name);
+      b.querySelector(".s").textContent = p ? `${p.items.length}곡` : "아직 없음 — 누르면 만들어져요";
+      b.onclick = () => { if (on) removeFromPlaylist(name, t.id); else addToPlaylist(name, t); renderSheet(); updateFavUI(); toast(on ? `"${name}"에서 뺐어요` : `"${name}"에 담았어요`); };
+      el.sheetList.appendChild(b);
+    }
+  }
+
+  // ── ♥ 즐겨찾기 ────────────────────────────────────────────
+  function toggleFav() {
+    const t = currentTrack(); if (!t) return;
+    if (inPlaylist(FAV, t.id)) { removeFromPlaylist(FAV, t.id); toast("즐겨찾기에서 뺐어요"); }
+    else { addToPlaylist(FAV, t); toast("즐겨찾기에 담았어요"); }
+    updateFavUI();
+    if (state.openPl === FAV) renderPlaylistDetail();
+  }
+  function updateFavUI() {
+    const t = currentTrack();
+    const on = !!t && inPlaylist(FAV, t.id);
+    el.icFavOn.classList.toggle("hidden", !on);
+    el.icFavOff.classList.toggle("hidden", on);
   }
 
   // ── 재생 순서 ──────────────────────────────────────────────
@@ -399,7 +709,7 @@
 
   function showNowPlaying(t) {
     el.npTitle.textContent = t.title;
-    el.npSub.textContent = t.folderName !== state.folder.name ? t.folderName : state.folder.name;
+    el.npSub.textContent = state.source.type === "playlist" ? `♪ ${state.source.name}` : (t.folderName || state.folder.name);
     document.title = t.title + " · Drive Music";
   }
 
@@ -427,7 +737,7 @@
   }
   function stopPlayback() {
     el.audio.pause(); el.audio.removeAttribute("src"); el.audio.load();
-    state.pos = -1; state.tracks = []; state.order = [];
+    state.pos = -1; state.tracks = []; state.order = []; state.source = { type: "library" };
     el.player.classList.remove("show");
   }
 
@@ -502,6 +812,25 @@
   el.btnPrev.onclick = prev;
   el.btnShuffle.onclick = toggleShuffle;
   el.btnRepeat.onclick = cycleRepeat;
+  el.btnFav.onclick = toggleFav;
+
+  // 플레이리스트
+  el.btnBack.onclick = closePlaylist;
+  el.tabLib.onclick = () => showTab("lib");
+  el.tabPl.onclick = () => showTab("pl");
+  el.btnPlNew.onclick = () => { if (createPlaylist(el.plNewName.value)) { el.plNewName.value = ""; renderPlaylistList(); } };
+  el.plNewName.addEventListener("keydown", (e) => { if (e.key === "Enter") el.btnPlNew.click(); });
+  el.btnPlPlay.onclick = () => playPlaylist(false);
+  el.btnPlShuffle.onclick = () => playPlaylist(true);
+  el.btnPlEdit.onclick = () => { state.plEditing = !state.plEditing; renderPlaylistDetail(); };
+  el.btnPlRename.onclick = renamePlaylist;
+  el.btnPlDelete.onclick = deletePlaylist;
+  el.dim.onclick = closeSheet;
+  el.btnSheetNew.onclick = () => {
+    const name = el.sheetNewName.value.trim(); if (!name || !state.sheetTrack) return;
+    addToPlaylist(name, state.sheetTrack); el.sheetNewName.value = ""; renderSheet(); updateFavUI(); toast(`"${name}"에 담았어요`);
+  };
+  el.sheetNewName.addEventListener("keydown", (e) => { if (e.key === "Enter") el.btnSheetNew.click(); });
 
   document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT") return;

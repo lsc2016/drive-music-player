@@ -14,6 +14,9 @@
 - 재생: `<audio>`는 헤더를 못 붙이므로 `alt=media`로 fetch → Blob → `URL.createObjectURL`. 받아둔 파일은 `state.blobUrls`에 최근 6곡까지, 다음 곡은 `prefetchNext()`로 미리 받음. (스트리밍이 아니라 통째로 받은 뒤 재생.)
 - 기억: `localStorage` 키 `dm:folder`, `dm:last:<folderId>`, `dm:shuffle`, `dm:repeat`.
 - 섞기는 `state.order`(인덱스 배열)만 섞고 `state.tracks`는 그대로 둠. 현재 곡 위치는 `state.pos`(order 기준).
+- 곡 출처 두 가지: `state.library`(폴더 전체 곡)와 `state.playlists`. 실제 재생 큐는 `state.tracks` + `state.source`(`{type:"library"}` 또는 `{type:"playlist", name}`)이고, `setQueue()`로 바꿈. 폴더 새로고침은 라이브러리만 갈고 플레이리스트 재생 중이면 큐를 건드리지 않음.
+- 플레이리스트 저장: 드라이브 루트의 `drive-music-playlists.md`(상수 `PL_FILE`). `serializePlaylists`/`parsePlaylists`가 `## 이름` + `- 제목 | 파일ID | 폴더` 형식을 읽고 씀. 바꾸면 `savePlaylists()` → localStorage 즉시 + 1.2초 뒤 `flushPlaylists()`로 드라이브 업로드(처음엔 multipart 생성, 이후 PATCH media). 이 때문에 scope에 `drive.file` 추가됨. `즐겨찾기`(상수 `FAV`)는 ♥ 버튼용 기본 플레이리스트.
+- 화면: 재생목록 화면에 탭(전체 곡 / 플레이리스트), 플레이리스트 상세는 별도 화면 `#s-pl`(뒤로 버튼으로 복귀), 담기는 바텀시트 `#sheet`. 곡 한 줄은 `trackRow()`가 공통으로 만듦.
 
 ## 작업 원칙
 - 지우고 새로 만들지 말고 있는 것에 더하고 보완하기. 파일 3개 구조와 "설정은 config.js 한 곳" 원칙 유지.
@@ -25,6 +28,6 @@
 ## 다음에 할 만한 것 (아직 안 함)
 - 큰 파일 스트리밍(Range 요청 + MediaSource)
 - 앨범아트(ID3 태그 읽기) 표시
-- 즐겨찾기/재생목록 저장 (드라이브에 `.md` 또는 `.json`으로)
 - 검색(제목으로 곡 찾기)
+- 플레이리스트 곡 순서를 드래그로 바꾸기 (지금은 ↑↓ 버튼)
 - PWA(manifest + service worker)로 홈 화면 설치·오프라인 캐시
