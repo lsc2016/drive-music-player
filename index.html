@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111318" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Drive Music</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%231db954'/><path d='M40 30v38a9 9 0 1 1-6-8.5V36l26-6v26a9 9 0 1 1-6-8.5V24l-14 3z' fill='%23fff'/></svg>" />
+  <style>
+    :root {
+      --bg: #111318;
+      --panel: #1a1d24;
+      --panel-2: #22262f;
+      --text: #f2f3f5;
+      --muted: #9aa0ad;
+      --accent: #1db954;
+      --accent-2: #17a34a;
+      --danger: #e5484d;
+      --radius: 14px;
+      --safe-b: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", system-ui, sans-serif;
+      font-size: 15px; line-height: 1.45;
+      display: flex; flex-direction: column;
+      overscroll-behavior: none;
+    }
+    button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+    button:disabled { opacity: .4; cursor: default; }
+    input { font: inherit; }
+
+    /* ── 상단바 ── */
+    header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px; border-bottom: 1px solid #262a33;
+      position: sticky; top: 0; background: var(--bg); z-index: 5;
+    }
+    header h1 { font-size: 17px; margin: 0; flex: 1; font-weight: 700; letter-spacing: .2px; }
+    header h1 small { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 13px; }
+    .iconbtn {
+      width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+      background: var(--panel-2); color: var(--text);
+    }
+    .iconbtn svg { width: 20px; height: 20px; fill: currentColor; }
+    .iconbtn.active { color: var(--accent); }
+
+    /* ── 화면들 ── */
+    main { flex: 1; overflow: auto; padding-bottom: calc(150px + var(--safe-b)); }
+    .screen { display: none; padding: 16px; }
+    .screen.show { display: block; }
+
+    .hero { text-align: center; padding: 60px 16px 20px; }
+    .hero .logo { width: 84px; height: 84px; margin: 0 auto 18px; }
+    .hero p { color: var(--muted); max-width: 320px; margin: 10px auto 24px; }
+    .primary {
+      background: var(--accent); color: #06130a; font-weight: 700;
+      padding: 13px 22px; border-radius: 999px; font-size: 15px;
+    }
+    .primary:active { background: var(--accent-2); }
+    .ghost { color: var(--muted); padding: 10px 14px; border-radius: 10px; }
+    .ghost:active { background: var(--panel-2); }
+
+    .notice {
+      background: #2a1f1f; border: 1px solid #5a2d2d; color: #ffb4b4;
+      padding: 12px 14px; border-radius: var(--radius); margin: 14px 0; font-size: 14px;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .notice.ok { background: #16271c; border-color: #27503a; color: #b8f0c9; }
+
+    /* ── 폴더 고르기 ── */
+    .searchrow { display: flex; gap: 8px; margin-bottom: 12px; }
+    .searchrow input {
+      flex: 1; padding: 11px 14px; border-radius: 12px; border: 1px solid #2d323c;
+      background: var(--panel); color: var(--text); outline: none;
+    }
+    .searchrow input:focus { border-color: var(--accent); }
+    .list { display: flex; flex-direction: column; gap: 6px; }
+    .row {
+      display: flex; align-items: center; gap: 12px; padding: 11px 12px;
+      background: var(--panel); border-radius: 12px; text-align: left; width: 100%;
+    }
+    .row:active { background: var(--panel-2); }
+    .row .ic { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; background: var(--panel-2); flex: none; }
+    .row .ic svg { width: 18px; height: 18px; fill: var(--muted); }
+    .row .t { flex: 1; min-width: 0; }
+    .row .t .n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .t .s { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row.playing .t .n { color: var(--accent); }
+    .row.playing .ic { background: #173a24; }
+    .row.playing .ic svg { fill: var(--accent); }
+    .row .num { color: var(--muted); width: 22px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; flex: none; }
+
+    .sectionhead { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+    .sectionhead h2 { font-size: 15px; margin: 0; flex: 1; }
+    .sectionhead .count { color: var(--muted); font-size: 13px; }
+    .empty { color: var(--muted); text-align: center; padding: 40px 10px; }
+
+    /* ── 하단 플레이어 ── */
+    #player {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+      background: rgba(26,29,36,.96); backdrop-filter: blur(14px);
+      border-top: 1px solid #2a2e38;
+      padding: 10px 16px calc(12px + var(--safe-b));
+      transform: translateY(110%); transition: transform .25s ease;
+    }
+    #player.show { transform: none; }
+    .np { display: flex; align-items: center; gap: 12px; }
+    .np .art {
+      width: 46px; height: 46px; border-radius: 10px; flex: none;
+      background: linear-gradient(135deg, #2b7a44, #1db954); display: grid; place-items: center;
+    }
+    .np .art svg { width: 22px; height: 22px; fill: #06130a; }
+    .np .meta { flex: 1; min-width: 0; }
+    .np .meta .title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .np .meta .sub { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .seek { display: flex; align-items: center; gap: 10px; margin: 8px 0 4px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .seek input[type=range] {
+      flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
+      background: linear-gradient(to right, var(--accent) var(--p, 0%), #3a3f4a var(--p, 0%));
+      outline: none;
+    }
+    .seek input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff;
+    }
+    .seek input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; }
+
+    .ctrls { display: flex; align-items: center; justify-content: space-between; }
+    .ctrls .iconbtn { background: transparent; }
+    .ctrls .iconbtn svg { width: 26px; height: 26px; }
+    .ctrls .big {
+      width: 56px; height: 56px; border-radius: 50%; background: #fff; color: #111;
+    }
+    .ctrls .big svg { width: 28px; height: 28px; }
+
+    .spinner { width: 18px; height: 18px; border: 2px solid #3a3f4a; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Drive Music <small id="hdr-sub"></small></h1>
+  <button class="iconbtn hidden" id="btn-folder" title="폴더 바꾸기">
+    <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
+  </button>
+  <button class="iconbtn hidden" id="btn-refresh" title="목록 새로고침">
+    <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+  </button>
+  <button class="iconbtn hidden" id="btn-logout" title="로그아웃">
+    <svg viewBox="0 0 24 24"><path d="M16 13v-2H7V8l-5 4 5 4v-3zM20 3H10v2h10v14H10v2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg>
+  </button>
+</header>
+
+<main>
+  <!-- 1) 로그인 -->
+  <section class="screen show" id="s-login">
+    <div class="hero">
+      <svg class="logo" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" fill="#1db954"/><path d="M40 30v38a9 9 0 1 1-6-8.5V36l26-6v26a9 9 0 1 1-6-8.5V24l-14 3z" fill="#fff"/></svg>
+      <h2 style="margin:0">내 드라이브 음악</h2>
+      <p>구글 드라이브에 올려둔 음악 파일을 그대로 들어요. 파일은 어디로도 복사되지 않습니다.</p>
+      <button class="primary" id="btn-login">구글로 로그인</button>
+    </div>
+    <div class="notice hidden" id="login-notice"></div>
+  </section>
+
+  <!-- 2) 폴더 고르기 -->
+  <section class="screen" id="s-folder">
+    <div class="sectionhead"><h2>음악 폴더 고르기</h2></div>
+    <div class="searchrow">
+      <input id="folder-q" placeholder="폴더 이름으로 찾기 (비우면 최근 폴더)" autocomplete="off" />
+      <button class="iconbtn" id="btn-folder-search" title="찾기">
+        <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+      </button>
+    </div>
+    <div class="list" id="folder-list"></div>
+    <div class="empty hidden" id="folder-empty">폴더가 없어요. 이름을 바꿔서 다시 찾아보세요.</div>
+  </section>
+
+  <!-- 3) 재생목록 -->
+  <section class="screen" id="s-tracks">
+    <div class="sectionhead">
+      <h2 id="tracks-title">재생목록</h2>
+      <span class="count" id="tracks-count"></span>
+    </div>
+    <div class="list" id="track-list"></div>
+    <div class="empty hidden" id="tracks-empty">이 폴더엔 음악 파일이 없어요.<br><small>mp3, m4a, flac, wav, ogg, aac 파일을 찾습니다.</small></div>
+  </section>
+</main>
+
+<!-- 하단 플레이어 -->
+<div id="player">
+  <div class="np">
+    <div class="art">
+      <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+    </div>
+    <div class="meta">
+      <div class="title" id="np-title">—</div>
+      <div class="sub" id="np-sub"></div>
+    </div>
+    <span class="spinner hidden" id="np-loading"></span>
+  </div>
+  <div class="seek">
+    <span id="t-cur">0:00</span>
+    <input type="range" id="seek" min="0" max="1000" value="0" step="1" />
+    <span id="t-dur">0:00</span>
+  </div>
+  <div class="ctrls">
+    <button class="iconbtn" id="btn-shuffle" title="섞기">
+      <svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>
+    </button>
+    <button class="iconbtn" id="btn-prev" title="이전">
+      <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+    </button>
+    <button class="iconbtn big" id="btn-play" title="재생/일시정지">
+      <svg viewBox="0 0 24 24" id="ic-play"><path d="M8 5v14l11-7z"/></svg>
+      <svg viewBox="0 0 24 24" id="ic-pause" class="hidden"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+    </button>
+    <button class="iconbtn" id="btn-next" title="다음">
+      <svg viewBox="0 0 24 24"><path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+    </button>
+    <button class="iconbtn" id="btn-repeat" title="반복">
+      <svg viewBox="0 0 24 24" id="ic-repeat"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+      <svg viewBox="0 0 24 24" id="ic-repeat1" class="hidden"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/></svg>
+    </button>
+  </div>
+</div>
+
+<audio id="audio" preload="auto"></audio>
+
+<script src="config.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="app.js"></script>
+</body>
+</html>
