@@ -6,6 +6,7 @@
 - `index.html` — 화면과 스타일(CSS는 이 파일 안에 있음). 화면 3개: 로그인 `#s-login`, 폴더 고르기 `#s-folder`, 재생목록 `#s-tracks`. 하단 고정 플레이어 `#player`.
 - `app.js` — 모든 동작. 즉시실행함수 하나 안에 섹션별로 나뉘어 있음: 로그인(토큰) → 드라이브 API → 폴더 화면 → 재생목록 화면 → 재생 순서 → 파일 받기 → 재생 제어 → Media Session → 이벤트 → 시작.
 - `config.js` — 사용자가 손대는 설정 (`CLIENT_ID`, `DEFAULT_FOLDER_NAME`, `INCLUDE_SUBFOLDERS`). 코드에서는 `window.APP_CONFIG`로 읽음.
+- `icons/`(icon-32·180·192·512.png, 초록 정사각형 + 흰 음표) + `manifest.json` — "홈 화면에 추가"용 앱 아이콘·이름. `index.html` `<head>`에서 연결, 경로는 GitHub Pages 하위 경로 때문에 전부 상대경로. 아이콘을 바꾸면 PNG 네 개를 같이 다시 만들기(`sips`로 SVG→PNG).
 - `serve.sh` — 로컬 실행 (`python3 -m http.server 8000`). `README.md` — 사용자용 설치·사용 안내(구글 클라이언트 ID 발급 순서 포함).
 
 ## 동작 방식 (바꿀 때 알아둘 것)

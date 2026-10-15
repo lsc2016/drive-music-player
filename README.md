@@ -70,6 +70,8 @@ GitHub 저장소 페이지 → **Settings → Pages → Branch: main / (root) �
 
 > 1번의 "승인된 JavaScript 원본"에 `https://lsc2016.github.io` 가 들어있어야 폰에서 로그인이 됩니다.
 
+홈 화면에 추가하면 초록 바탕 흰 음표 앱 아이콘으로 설치됩니다 (아이폰: 사파리 공유 버튼 → 홈 화면에 추가).
+
 ---
 
 ## 쓰는 법
