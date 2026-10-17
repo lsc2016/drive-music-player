@@ -37,6 +37,9 @@
     tracksTitle: $("tracks-title"), tracksCount: $("tracks-count"), tagProgress: $("tag-progress"),
     trackList: $("track-list"), tracksEmpty: $("tracks-empty"),
     libQ: $("lib-q"), searchEmpty: $("search-empty"),
+    libKinds: $("lib-kinds"), libGroups: $("lib-groups"), groupList: $("group-list"),
+    groupHead: $("group-head"), groupTitle: $("group-title"), groupSub: $("group-sub"),
+    btnGroupBack: $("btn-group-back"), btnGroupPlay: $("btn-group-play"),
     player: $("player"), npTitle: $("np-title"), npSub: $("np-sub"), npLoading: $("np-loading"),
     npArt: $("np-art"), npArtImg: $("np-art-img"),
     tCur: $("t-cur"), tDur: $("t-dur"), seek: $("seek"),
@@ -58,7 +61,8 @@
     scanId: 0,            // 태그 읽기 차례 번호 — 폴더를 바꾸면 이전 읽기는 멈춤
     arts: new Map(),      // 파일ID -> 표지 그림 objectURL (메모리에만)
     tracks: [],           // 지금 "재생 중인 출처"의 곡들 (전체 곡 또는 플레이리스트 하나)
-    source: { type: "library" },   // { type:"library" } | { type:"playlist", name }
+    source: { type: "library" },   // { type:"library" } | { type:"playlist", name } | { type:"group", kind, key, name }
+    libView: { kind: "songs", group: null },   // 보관함에서 보던 분류(곡/artist/album/composer/genre)와 묶음 key
     playlists: [],        // [{ name, items: [{ id, title, folderName }] }]
     plFileId: null,       // 드라이브에 있는 플레이리스트 파일 id
     plDirty: false, plSaveTimer: null,
@@ -312,6 +316,7 @@
     el.tracksTitle.textContent = folder.name;
     el.tracksCount.textContent = "";
     el.trackList.innerHTML = `<div class="empty"><span class="spinner"></span> 음악 찾는 중…</div>`;
+    el.trackList.classList.remove("hidden"); el.libGroups.classList.add("hidden");   // 분류 화면이어도 "찾는 중"은 보이게
     el.tracksEmpty.classList.add("hidden");
     el.searchEmpty.classList.add("hidden");
     showTab("lib");
@@ -346,7 +351,7 @@
         if (i >= 0) { state.pos = state.order.indexOf(i); showNowPlaying(tracks[i]); el.player.classList.add("show"); }
       }
     }
-    renderTracks();
+    renderLib();
   }
 
   // 출처(전체 곡 / 플레이리스트)를 바꿔서 재생 큐를 새로 만듦
@@ -380,14 +385,14 @@
 
   // 검색: 보기만 거름. 번호(i)는 전체 곡 기준 그대로라 눌러도 전체 곡 큐에서 재생됨
   const norm = (s) => (s || "").normalize("NFC").toLowerCase().replace(/\s+/g, "");
+  const matchTrack = (t, q) => { const g = t.tags || {}; return [dispTitle(t), t.title, t.folderName, g.artist, g.album].some((v) => norm(v).includes(q)); };
   function renderTracks() {
     el.trackList.innerHTML = "";
     const cur = currentTrack();
     const q = norm(el.libQ.value);
     let lastFolder = null, shown = 0;
     state.library.forEach((t, i) => {
-      const g = t.tags || {};
-      if (q && ![dispTitle(t), t.title, t.folderName, g.artist, g.album].some((v) => norm(v).includes(q))) return;
+      if (q && !matchTrack(t, q)) return;
       shown++;
       if (CFG.INCLUDE_SUBFOLDERS && t.folderName !== lastFolder && t.folderName !== state.folder.name) {
         const h = document.createElement("div");
@@ -411,8 +416,135 @@
 
   function markPlayingRow() {
     const cur = currentTrack();
-    for (const r of document.querySelectorAll("#track-list .row, #pl-tracks .row")) r.classList.toggle("playing", !!cur && r.dataset.id === cur.id);
+    for (const r of document.querySelectorAll("#track-list .row, #pl-tracks .row, #group-list .row[data-id]")) r.classList.toggle("playing", !!cur && r.dataset.id === cur.id);
     updateFavUI();
+  }
+
+  // ── 보관함 분류: 곡 | 아티스트 | 앨범 | 작곡가 | 장르 ─────────
+  //  "곡"은 위의 renderTracks() 그대로. 나머지는 이름 목록 → 누르면 그 묶음의 곡들
+  const KINDS = {
+    artist:   { label: "아티스트", unit: "명", unknown: "알 수 없는 아티스트", get: (g) => g.artist },
+    album:    { label: "앨범", unit: "개", unknown: "알 수 없는 앨범", get: (g) => g.album },
+    composer: { label: "작곡가", unit: "명", unknown: "알 수 없는 작곡가", get: (g) => g.composer },
+    genre:    { label: "장르", unit: "개", unknown: "알 수 없는 장르", get: (g) => g.genre },
+  };
+  const SVG_KIND = {
+    artist: `<svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`,
+    album: `<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 14.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zm0-5.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>`,
+    composer: `<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm17.71-10.21a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>`,
+    genre: `<svg viewBox="0 0 24 24"><path d="m21.41 11.58-9-9A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7c0 .55.22 1.05.59 1.42l9 9a2 2 0 0 0 2.82 0l7-7a2 2 0 0 0 0-2.84zM5.5 7a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>`,
+  };
+  const SVG_PLAY = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+  const libColl = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
+  const mainEl = document.querySelector("main");
+  let groupsScroll = 0;   // 묶음 안으로 들어가기 전 이름 목록 스크롤 위치
+
+  // 태그를 못 읽어 파일명·폴더명만 있는 곡 (앨범을 폴더명으로 묶지 않고 "알 수 없는 앨범"으로)
+  const untagged = (t) => { const g = t.tags || {}; return !g.artist && (!g.album || g.album === t.folderName) && (!g.title || g.title === stripExt(t.name)); };
+  function groupKey(kind, t) {
+    const g = t.tags || {};
+    if (kind === "album") return untagged(t) || !g.album ? "" : g.album + "\u0001" + (g.albumArtist || "");   // 같은 이름 다른 앨범아티스트는 따로
+    return (KINDS[kind].get(g) || "").trim();
+  }
+  const byTrack = (a, b) => (Number(a.tags.track) || 999) - (Number(b.tags.track) || 999) || libColl.compare(dispTitle(a), dispTitle(b));
+  function buildGroups(kind) {
+    const map = new Map();
+    for (const t of state.library) { const k = groupKey(kind, t); if (!map.has(k)) map.set(k, []); map.get(k).push(t); }
+    const out = [...map].map(([key, tracks]) => {
+      const unknown = key === "";
+      const [albumName, albumArtist] = key.split("\u0001");
+      let sub = "";
+      if (kind === "album" && !unknown) {
+        const artists = new Set(tracks.map((t) => t.tags.artist).filter(Boolean));
+        sub = albumArtist || (artists.size === 1 ? [...artists][0] : artists.size > 1 ? "여러 아티스트" : "");
+      }
+      // 앨범 안: 트랙 번호 순 / 나머지: 앨범 → 트랙 순
+      tracks.sort(kind === "album" ? byTrack : (a, b) => libColl.compare(a.tags.album || "", b.tags.album || "") || byTrack(a, b));
+      return { kind, key, name: unknown ? KINDS[kind].unknown : kind === "album" ? albumName : key, sub, unknown, tracks };
+    });
+    out.sort((a, b) => (a.unknown - b.unknown) || libColl.compare(a.name, b.name) || libColl.compare(a.sub, b.sub));   // 알 수 없음은 맨 아래
+    return out;
+  }
+
+  const saveLibView = () => store.set("libview", state.libView);
+  function setLibView(kind, group = null) {
+    state.libView = { kind, group };
+    el.libQ.value = "";
+    saveLibView();
+    renderLib();
+  }
+
+  function renderLib() {
+    const v = state.libView;
+    for (const b of el.libKinds.querySelectorAll("button")) b.classList.toggle("on", b.dataset.kind === v.kind);
+    const songs = v.kind === "songs" || !KINDS[v.kind];
+    el.trackList.classList.toggle("hidden", !songs);
+    el.libGroups.classList.toggle("hidden", songs);
+    if (songs) {
+      el.libQ.placeholder = "곡 찾기 (제목·가수·앨범·폴더)";
+      renderTracks();
+      return;
+    }
+    const groups = buildGroups(v.kind);
+    const g = v.group != null ? groups.find((x) => x.key === v.group) : null;
+    if (v.group != null && !g) { v.group = null; saveLibView(); }   // 다른 폴더라 그 묶음이 없음
+    if (g) renderGroupDetail(g); else renderGroupNames(groups);
+  }
+
+  function renderGroupNames(groups) {
+    const k = KINDS[state.libView.kind];
+    el.libQ.placeholder = `${k.label} 이름으로 찾기`;
+    el.groupHead.classList.add("hidden");
+    const q = norm(el.libQ.value);
+    const shown = q ? groups.filter((g) => norm(g.name).includes(q) || norm(g.sub).includes(q)) : groups;
+    el.groupList.innerHTML = "";
+    for (const g of shown) {
+      const b = document.createElement("div");
+      b.className = "row";
+      b.innerHTML = `<div class="ic grp${g.unknown ? " unknown" : ""}">${SVG_KIND[g.kind]}</div>
+        <button class="t" style="text-align:left;flex:1;min-width:0;padding:0"><div class="n"></div><div class="s"></div></button>`;
+      b.querySelector(".n").textContent = g.name;
+      b.querySelector(".s").textContent = [g.sub, `${g.tracks.length}곡`].filter(Boolean).join(" · ");
+      b.querySelector(".t").onclick = () => { groupsScroll = mainEl.scrollTop; setLibView(g.kind, g.key); mainEl.scrollTop = 0; };
+      const a = document.createElement("button");
+      a.className = "act"; a.title = "전부 재생"; a.innerHTML = SVG_PLAY; a.onclick = () => playGroup(g);
+      b.appendChild(a);
+      el.groupList.appendChild(b);
+    }
+    el.tracksCount.textContent = !groups.length ? "" : q ? `${shown.length} / ${groups.length}${k.unit}` : `${groups.length}${k.unit}`;
+    el.searchEmpty.classList.toggle("hidden", !(q && groups.length && !shown.length));
+  }
+
+  function renderGroupDetail(g) {
+    el.libQ.placeholder = "이 안에서 곡 찾기";
+    el.groupHead.classList.remove("hidden");
+    el.groupTitle.textContent = g.name;
+    el.groupSub.textContent = [KINDS[g.kind].label, g.sub, `${g.tracks.length}곡`].filter(Boolean).join(" · ");
+    const q = norm(el.libQ.value), cur = currentTrack();
+    el.groupList.innerHTML = "";
+    let shown = 0;
+    g.tracks.forEach((t, i) => {
+      if (q && !matchTrack(t, q)) return;
+      shown++;
+      el.groupList.appendChild(trackRow(t, i, {
+        playing: !!cur && cur.id === t.id,
+        sub: (g.kind === "album" ? t.tags.artist : tagSub(t)) || fmtSize(t.size),
+        onPlay: () => playGroup(g, i),
+        onAdd: () => openSheet(t),
+      }));
+    });
+    el.tracksCount.textContent = q ? `${shown} / ${g.tracks.length}곡` : `${g.tracks.length}곡`;
+    el.searchEmpty.classList.toggle("hidden", !(q && !shown));
+  }
+
+  // 묶음을 재생 큐로 — i가 없으면 처음부터(섞기면 섞인 첫 곡)
+  function playGroup(g, i) {
+    setQueue({ type: "group", kind: g.kind, key: g.key, name: g.name }, g.tracks.slice());
+    if (i == null) { state.pos = 0; playCurrent(); } else playIndex(i);
+  }
+  function currentGroup() {
+    const v = state.libView;
+    return v.group != null && KINDS[v.kind] ? buildGroups(v.kind).find((x) => x.key === v.group) : null;
   }
 
   // ── 탭 ─────────────────────────────────────────────────────
@@ -965,11 +1097,12 @@
     if (my !== state.scanId) return;
     setTagProgress("");
     flushLibrary();
+    if (state.libView.kind !== "songs") renderLib();   // 묶음은 태그가 다 모여야 정확함
   }
 
   // 태그를 읽은 곡의 줄만 고쳐 그림 (목록 전체를 다시 그리지 않음)
   function updateTrackRows(t) {
-    for (const r of document.querySelectorAll(`#track-list .row[data-id="${CSS.escape(t.id)}"], #pl-tracks .row[data-id="${CSS.escape(t.id)}"]`)) {
+    for (const r of document.querySelectorAll(["#track-list", "#pl-tracks", "#group-list"].map((l) => `${l} .row[data-id="${CSS.escape(t.id)}"]`).join(", "))) {
       r.querySelector(".n").textContent = dispTitle(t);
       if (r.closest("#track-list")) r.querySelector(".s").textContent = tagSub(t) || fmtSize(t.size);
     }
@@ -1072,7 +1205,9 @@
   function showNowPlayingText(t) {
     const artist = (t.tags && t.tags.artist) || "";
     el.npTitle.textContent = dispTitle(t);
-    el.npSub.textContent = state.source.type === "playlist" ? [artist, `♪ ${state.source.name}`].filter(Boolean).join(" · ")
+    const src = state.source;
+    el.npSub.textContent = src.type === "playlist" || src.type === "group"
+      ? [src.kind === "artist" ? "" : artist, `♪ ${src.name}`].filter(Boolean).join(" · ")
       : (tagSub(t) || t.folderName || state.folder.name);
     document.title = dispTitle(t) + " · Drive Music";
   }
@@ -1192,14 +1327,24 @@
   el.btnRefresh.onclick = () => { if (refreshLong) { refreshLong = false; return; } if (state.folder) openFolder(state.folder); };
   el.btnFolderSearch.onclick = searchFolders;
   el.folderQ.addEventListener("keydown", (e) => { if (e.key === "Enter") searchFolders(); });
-  el.libQ.addEventListener("input", renderTracks);
-  el.libQ.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { if (e.key === "Escape") { el.libQ.value = ""; renderTracks(); } el.libQ.blur(); } });
+  el.libQ.addEventListener("input", renderLib);
+  el.libQ.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { if (e.key === "Escape") { el.libQ.value = ""; renderLib(); } el.libQ.blur(); } });
   el.btnPlay.onclick = togglePlay;
   el.btnNext.onclick = next;
   el.btnPrev.onclick = prev;
   el.btnShuffle.onclick = toggleShuffle;
   el.btnRepeat.onclick = cycleRepeat;
   el.btnFav.onclick = toggleFav;
+
+  // 보관함 분류
+  el.libKinds.onclick = (e) => {
+    const b = e.target.closest("button[data-kind]"); if (!b) return;
+    setLibView(b.dataset.kind);
+    mainEl.scrollTop = 0;
+    b.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+  el.btnGroupBack.onclick = () => { setLibView(state.libView.kind); mainEl.scrollTop = groupsScroll; };
+  el.btnGroupPlay.onclick = () => { const g = currentGroup(); if (g) playGroup(g); };
 
   // 플레이리스트
   el.btnBack.onclick = closePlaylist;
@@ -1232,6 +1377,8 @@
   (function init() {
     state.shuffle = !!store.get("shuffle", false);
     state.repeat = store.get("repeat", "off");
+    const lv = store.get("libview", null);
+    if (lv && (lv.kind === "songs" || KINDS[lv.kind])) state.libView = { kind: lv.kind, group: lv.group == null ? null : String(lv.group) };
     el.btnShuffle.classList.toggle("active", state.shuffle);
     applyRepeatUI();
 

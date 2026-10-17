@@ -146,10 +146,26 @@
     }
     .ctrls .big svg { width: 28px; height: 28px; }
 
-    /* ── 탭 (전체 곡 / 플레이리스트) ── */
+    /* ── 탭 (보관함 / 플레이리스트) ── */
     .tabs { display: flex; gap: 6px; background: var(--panel); padding: 4px; border-radius: 12px; margin-bottom: 14px; }
     .tabs button { flex: 1; padding: 9px; border-radius: 9px; color: var(--muted); font-weight: 600; }
     .tabs button.on { background: var(--panel-2); color: var(--text); }
+
+    /* ── 보관함 분류 고르는 줄 (곡 | 아티스트 | 앨범 | 작곡가 | 장르) — 좁으면 옆으로 밀어서 ── */
+    .kinds { display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .kinds::-webkit-scrollbar { display: none; }
+    .kinds button { flex: none; padding: 7px 14px; border-radius: 999px; background: var(--panel); color: var(--muted); font-weight: 600; font-size: 14px; white-space: nowrap; }
+    .kinds button.on { background: var(--accent); color: #06130a; }
+    /* 묶음(아티스트·앨범…) 안으로 들어갔을 때 맨 위 줄 */
+    .grouphead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .grouphead .t { flex: 1; min-width: 0; }
+    .grouphead .t .n { font-weight: 700; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .grouphead .chip { flex: none; }
+    .grouphead .t .s { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .ic.grp { background: linear-gradient(135deg, #2b7a44, #1db954); }
+    .row .ic.grp svg { fill: #06130a; }
+    .row .ic.grp.unknown { background: var(--panel-2); }
+    .row .ic.grp.unknown svg { fill: var(--muted); }
 
     /* ── 곡 줄 오른쪽 작은 버튼 ── */
     .row .act { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: var(--muted); flex: none; }
@@ -170,12 +186,12 @@
 
     /* ── 플레이리스트 상세 머리 ── */
     .plhead { display: flex; gap: 8px; margin: 2px 0 14px; flex-wrap: wrap; }
-    .plhead .chip {
+    .plhead .chip, .grouphead .chip {
       display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; border-radius: 999px;
       background: var(--panel-2); font-weight: 600; font-size: 14px;
     }
-    .plhead .chip svg { width: 16px; height: 16px; fill: currentColor; }
-    .plhead .chip.primary { background: var(--accent); color: #06130a; }
+    .plhead .chip svg, .grouphead .chip svg { width: 16px; height: 16px; fill: currentColor; }
+    .plhead .chip.primary, .grouphead .chip.primary { background: var(--accent); color: #06130a; }
     .plhead .chip.on { outline: 2px solid var(--accent); }
     .plhead .chip.danger { color: #ff8a8a; }
 
@@ -258,12 +274,19 @@
   <!-- 3) 재생목록 -->
   <section class="screen" id="s-tracks">
     <div class="tabs">
-      <button class="on" id="tab-lib">전체 곡</button>
+      <button class="on" id="tab-lib">보관함</button>
       <button id="tab-pl">플레이리스트</button>
     </div>
 
-    <!-- 탭 1: 폴더의 전체 곡 -->
+    <!-- 탭 1: 보관함 (폴더의 전체 곡을 곡/아티스트/앨범/작곡가/장르로 나눠 보기) -->
     <div id="view-lib">
+      <div class="kinds" id="lib-kinds">
+        <button class="on" data-kind="songs">곡</button>
+        <button data-kind="artist">아티스트</button>
+        <button data-kind="album">앨범</button>
+        <button data-kind="composer">작곡가</button>
+        <button data-kind="genre">장르</button>
+      </div>
       <div class="searchrow">
         <input id="lib-q" type="search" placeholder="곡 찾기 (제목·가수·앨범·폴더)" autocomplete="off" enterkeyhint="search" />
       </div>
@@ -273,8 +296,17 @@
         <span class="count" id="tracks-count"></span>
       </div>
       <div class="list" id="track-list"></div>
+      <!-- 아티스트·앨범·작곡가·장르: 이름 목록, 누르면 그 안의 곡 -->
+      <div id="lib-groups" class="hidden">
+        <div class="grouphead hidden" id="group-head">
+          <button class="iconbtn" id="btn-group-back" title="이름 목록으로"><svg viewBox="0 0 24 24"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></button>
+          <div class="t"><div class="n" id="group-title"></div><div class="s" id="group-sub"></div></div>
+          <button class="chip primary" id="btn-group-play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>재생</button>
+        </div>
+        <div class="list" id="group-list"></div>
+      </div>
       <div class="empty hidden" id="tracks-empty">이 폴더엔 음악 파일이 없어요.<br><small>mp3, m4a, flac, wav, ogg, aac 파일을 찾습니다.</small></div>
-      <div class="empty hidden" id="search-empty">찾는 곡이 없어요.<br><small>다른 글자로 찾아보거나, 칸을 비우면 전체 곡이 다시 보여요.</small></div>
+      <div class="empty hidden" id="search-empty">찾는 곡이 없어요.<br><small>다른 글자로 찾아보거나, 칸을 비우면 다시 전부 보여요.</small></div>
     </div>
 
     <!-- 탭 2: 플레이리스트 목록 -->
@@ -308,7 +340,7 @@
       <button class="chip danger hidden" id="btn-pl-delete">삭제</button>
     </div>
     <div class="list" id="pl-tracks"></div>
-    <div class="empty hidden" id="pl-tracks-empty">비어 있어요.<br><small>"전체 곡"에서 곡 오른쪽 ＋ 를 눌러 담으세요.</small></div>
+    <div class="empty hidden" id="pl-tracks-empty">비어 있어요.<br><small>"보관함"에서 곡 오른쪽 ＋ 를 눌러 담으세요.</small></div>
   </section>
 </main>
 
