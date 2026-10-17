@@ -25,7 +25,12 @@
 - 태그 읽기는 파일 일부만 받음: `remoteFile(t).getAt(위치, 길이, exact)`가 Range 요청(`driveFetch`에 `Range` 헤더)으로 조각을 받아 이어 붙임. `tagBlobOf()`가 형식별로 태그 부분만 Blob으로 만듦 — mp3는 ID3v2 머리의 길이만큼(없으면 끝 128바이트 ID3v1), flac은 메타데이터 블록 끝까지(작곡가·앨범아티스트·연도는 jsmediatags가 안 줘서 `flacComments()`로 직접), m4a는 맨 위 `ftyp`+`moov`만 이어 붙인 작은 파일(moov가 끝에 있어도 그 자리만 받음). 첫 요청은 m4a·flac 1MB, 그 외 128KB. 옛 한국 mp3의 EUC-KR 태그는 `fixKo()`로 다시 풂. `scanTags(all)`가 동시에 `TAG_WORKERS`(4)곡씩, `state.scanId`로 폴더 바뀌면 멈춤. 진행은 `#tag-progress`.
 - 보관함 저장: 드라이브 루트 `drive-music-library.md`(상수 `LIB_FILE`). 한 줄 `- 파일ID | 제목 | 아티스트 | 앨범 | 앨범아티스트 | 작곡가 | 장르 | 트랙 | 연도 | 폴더`(`serializeLibrary`/`parseLibrary`, 모든 폴더 곡이 한 파일에). `state.tagDb`(Map, 파일ID→{tags, folderName})가 내용. 폴더 열 때 `loadTagDb()` 먼저(한 번만) → 보관함에 없는 곡만 `scanTags()`. 25곡마다·끝날 때 `flushLibrary()`(겹치지 않게 `libSaving`), 업로드는 플레이리스트와 같이 `uploadMd()`(처음 multipart, 이후 PATCH). localStorage `dm:library`에도 복사.
 - 표지: 저장 안 함. `hasArt`도 파일엔 없어서 보관함에서 읽은 곡은 `null`(모름). 재생할 때 `loadArt()`가 받아둔 Blob을 jsmediatags로 다시 읽어 `state.arts`(최근 12곡 objectURL)에 → `#np-art-img`, Media Session artwork(없으면 `icons/icon-512.png`).
-- 새로고침 버튼: 클릭 = `openFolder(folder)`(새 곡만), 0.7초 길게 누르기 = `openFolder(folder, { retag: true })`(전부 다시).
+- 새로고침 버튼: 클릭 = `openFolder(folder)`(새 곡만), 0.7초 길게 누르기 = `retagAll()`(전부 다시 — 고친 곡이 있으면 confirm으로 버릴지 물음 → `openFolder(folder, { retag: true, dropEdits })`).
+- 태그 고치기(음악 파일은 절대 안 건드림, `state.tagDb` → library.md만): **edited 규칙** — 앱에서 고친 곡은 tagDb 칸에 `edited: true`, library.md 줄 끝에 ` | edited`(11번째 칸). `scanTags(all, dropEdits)`는 edited 곡을 건너뜀(all이어도). `dropEdits`(= "고친 태그도 버릴까요?" 확인)일 때만 다시 읽어 edited를 지움. 읽는 도중 고친 곡도 덮지 않음. edited 곡은 `untagged()`가 false(알 수 없음으로 안 묶음). 고칠 땐 `ensureEntry(t)`(아직 안 읽은 곡이면 칸 만듦) → 값 바꾸고 → `afterLibEdit()`(= `saveLibrary()` 1.2초 뒤 `flushLibrary()` + 분류·플레이리스트·하단 플레이어 다시 그림).
+- 묶음 합치기/이름 바꾸기: 이름 목록 `#btn-group-edit`(편집) → `state.groupEditing`, 체크는 `state.groupChecked`(key), 2개 이상이면 `#btn-merge` → `openMerge(groups)`. 마우스(`canDrag`: hover+fine pointer)면 편집 아닐 때 줄 HTML5 drag&drop → 놓은 줄이 기본 선택. 편집 중 ✎·길게 누르기 → `openRename(g)`. 둘 다 `retagGroups(kind, groups, name, albumArtist)` — 앨범은 앨범아티스트도 고른 묶음 것으로 맞춤, 듣던 묶음이면 `state.source` 이름도 갱신.
+- 곡 ⋯(`trackRow`의 `onMore`) → `openTrackMenu()` → `openTagForm()`(`TAG_FIELDS`, `<datalist id="dl-artist|album|genre|composer">`는 `fillDatalists()`가 tagDb 값으로 채움).
+- 되돌리기: 고치기·전부 다시 읽기 직전 `rememberUndo(label)`가 library.md 전체 텍스트를 localStorage `dm:libundo`에 한 벌(한 단계만). `undoLast()`가 그걸 `parseLibrary`해서 tagDb 통째로 갈고 저장. 토스트 버튼(`toast(msg, {label, fn})`, 5초)·보관함 머리 ⋯(`openLibMenu()`)에서 부름.
+- 바텀시트 두 개: `#sheet`(플레이리스트 담기, 예전 그대로), `#msheet`(만능: `openMSheet({title, sub, body, ok})` — 메뉴·합치기·이름 바꾸기·태그 편집).
 
 ## 작업 원칙
 - 지우고 새로 만들지 말고 있는 것에 더하고 보완하기. 파일 3개 구조와 "설정은 config.js 한 곳" 원칙 유지.

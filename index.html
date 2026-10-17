@@ -222,6 +222,46 @@
       opacity: 0; transition: .2s; z-index: 30; pointer-events: none; white-space: nowrap;
     }
     .toast.show { opacity: 1; transform: translateX(-50%); }
+    .toast.show:has(button) { pointer-events: auto; }
+    .toast button { margin-left: 12px; color: var(--accent); font-weight: 700; }
+
+    /* ── 보관함 고치기: 만능 바텀시트(메뉴·입력창) ── */
+    #msheet {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 21; background: var(--panel);
+      border-radius: 18px 18px 0 0; padding: 14px 16px calc(16px + var(--safe-b));
+      transform: translateY(105%); transition: transform .25s ease; max-height: 85vh; display: flex; flex-direction: column;
+    }
+    #msheet.show { transform: none; }
+    #msheet .grab { width: 40px; height: 4px; border-radius: 2px; background: #3a3f4a; margin: 0 auto 12px; flex: none; }
+    #msheet h3 { margin: 0 0 4px; font-size: 15px; }
+    #msheet .sub { color: var(--muted); font-size: 13px; margin-bottom: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #msheet .body { overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+    #msheet .row .chk { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #4a505c; flex: none; }
+    #msheet .row.on .chk { border: 6px solid var(--accent); }
+    #msheet .row.off { opacity: .45; pointer-events: none; }
+    #msheet label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+    #msheet .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #msheet input { padding: 10px 12px; border-radius: 10px; border: 1px solid #2d323c; background: var(--panel-2); color: var(--text); outline: none; font-size: 16px; width: 100%; box-sizing: border-box; }
+    #msheet input:focus { border-color: var(--accent); }
+    #msheet .btns { display: flex; gap: 8px; margin-top: 12px; flex: none; }
+    #msheet .btns button { flex: 1; padding: 12px; border-radius: 12px; background: var(--panel-2); font-weight: 700; }
+    #msheet .btns button.ok { background: var(--accent); color: #06130a; }
+
+    /* 이름 목록 편집(합치기) */
+    .sectionhead .chip { padding: 5px 12px; border-radius: 999px; background: var(--panel-2); font-weight: 600; font-size: 13px; }
+    .sectionhead .chip.on { background: var(--accent); color: #06130a; }
+    .sectionhead .iconbtn { width: 32px; height: 32px; }
+    .row .gchk { width: 22px; height: 22px; border-radius: 6px; border: 2px solid #4a505c; flex: none; display: none; place-items: center; }
+    .row .gchk svg { width: 14px; height: 14px; fill: #06130a; display: none; }
+    .gediting .row .gchk { display: grid; }
+    .gediting .row.on .gchk { background: var(--accent); border-color: var(--accent); }
+    .gediting .row.on .gchk svg { display: block; }
+    .row.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
+    .mergebar {
+      position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + var(--safe-b)); z-index: 15;
+      padding: 12px 22px; border-radius: 999px; background: var(--accent); color: #06130a; font-weight: 700; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+    }
+    body:has(#player.show) .mergebar { bottom: calc(165px + var(--safe-b)); }
 
     .spinner { width: 18px; height: 18px; border: 2px solid #3a3f4a; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -294,6 +334,8 @@
         <h2 id="tracks-title">재생목록</h2>
         <span class="count hidden" id="tag-progress"></span>
         <span class="count" id="tracks-count"></span>
+        <button class="chip hidden" id="btn-group-edit">편집</button>
+        <button class="iconbtn" id="btn-lib-menu" title="보관함 메뉴"><svg viewBox="0 0 24 24"><path d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
       </div>
       <div class="list" id="track-list"></div>
       <!-- 아티스트·앨범·작곡가·장르: 이름 목록, 누르면 그 안의 곡 -->
@@ -304,6 +346,7 @@
           <button class="chip primary" id="btn-group-play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>재생</button>
         </div>
         <div class="list" id="group-list"></div>
+        <button class="mergebar hidden" id="btn-merge">합치기</button>
       </div>
       <div class="empty hidden" id="tracks-empty">이 폴더엔 음악 파일이 없어요.<br><small>mp3, m4a, flac, wav, ogg, aac 파일을 찾습니다.</small></div>
       <div class="empty hidden" id="search-empty">찾는 곡이 없어요.<br><small>다른 글자로 찾아보거나, 칸을 비우면 다시 전부 보여요.</small></div>
@@ -401,6 +444,8 @@
     </button>
   </div>
 </div>
+<div id="msheet"><div class="grab"></div><h3 id="msheet-title"></h3><div class="sub" id="msheet-sub"></div><div class="body" id="msheet-body"></div><div class="btns hidden" id="msheet-btns"><button id="msheet-cancel">취소</button><button class="ok" id="msheet-ok">확인</button></div></div>
+<datalist id="dl-artist"></datalist><datalist id="dl-album"></datalist><datalist id="dl-genre"></datalist><datalist id="dl-composer"></datalist>
 <div class="toast" id="toast"></div>
 
 <audio id="audio" preload="auto"></audio>
