@@ -42,6 +42,7 @@
     libKinds: $("lib-kinds"), libGroups: $("lib-groups"), groupList: $("group-list"),
     groupHead: $("group-head"), groupTitle: $("group-title"), groupSub: $("group-sub"),
     btnGroupBack: $("btn-group-back"), btnGroupPlay: $("btn-group-play"),
+    libPlaybar: $("lib-playbar"), btnLibPlay: $("btn-lib-play"), btnLibShuffle: $("btn-lib-shuffle"),
     btnGroupEdit: $("btn-group-edit"), btnLibMenu: $("btn-lib-menu"), btnMerge: $("btn-merge"),
     msheet: $("msheet"), msheetTitle: $("msheet-title"), msheetSub: $("msheet-sub"), msheetBody: $("msheet-body"),
     msheetBtns: $("msheet-btns"), msheetCancel: $("msheet-cancel"), msheetOk: $("msheet-ok"),
@@ -68,7 +69,7 @@
     openSeq: 0,           // 폴더 열기 차례 번호 — 그새 다른 폴더를 열면 늦게 온 결과는 버림
     arts: new Map(),      // 파일ID -> 표지 그림 objectURL (메모리에만)
     tracks: [],           // 지금 "재생 중인 출처"의 곡들 (전체 곡 또는 플레이리스트 하나)
-    source: { type: "library" },   // { type:"library" } | { type:"playlist", name } | { type:"group", kind, key, name }
+    source: { type: "library" },   // { type:"library" } | { type:"playlist", name } | { type:"group", kind, key, name } | { type:"view", name }(검색 결과·분류 전체)
     libView: { kind: "songs", group: null },   // 보관함에서 보던 분류(곡/artist/album/composer/genre)와 묶음 key
     playlists: [],        // [{ name, items: [{ id, title, folderName }] }]
     plFileId: null,       // 드라이브에 있는 플레이리스트 파일 id
@@ -216,7 +217,7 @@
     state.scanId++; state.tagDb = new Map(); state.libFileId = null; tagDbLoading = null; store.del("library"); store.del("libundo");
     for (const k of store.get("libkeys", [])) store.del("lib:" + k);
     store.del("libkeys");
-    store.del("folder"); state.folder = null;   // 다음 로그인은 기본 폴더(Music) 찾기부터
+    store.del("folder"); store.del("queue"); state.folder = null;   // 다음 로그인은 기본 폴더(Music) 찾기부터
     show(el.sLogin);
     notice("로그아웃했어요.", true);
   }
@@ -404,6 +405,8 @@
       if (!cached) setLibrary(tracks);
       else if (libChanged(cached, tracks)) refreshLibrary(tracks);
       else { attachTags(); renderLib(); }   // 목록은 같고 드라이브의 태그만 새로 왔을 수 있음
+      const cur = currentTrack();
+      if (cur) { const e = state.tagDb.get(cur.id); if (e) cur.tags = e.tags; showNowPlayingText(cur); }   // 하단 플레이어 글자도 태그로
       scanTags(retag, dropEdits);
     } catch (e) {
       if (my !== state.openSeq) return;
@@ -459,8 +462,13 @@
     el.tracksCount.textContent = tracks.length ? `${tracks.length}곡` : "";
     el.tracksEmpty.classList.toggle("hidden", tracks.length > 0);
 
+    // 처음 열 때(아직 큐가 없음): 지난번 듣던 큐(출처·순서)가 이 폴더 것이면 그대로 되살림
+    if (!state.tracks.length && restoreQueue(tracks)) {
+      const cur = currentTrack();
+      if (cur) { showNowPlaying(cur); el.player.classList.add("show"); }
+    }
     // 출처를 전체 곡으로 — 플레이리스트를 듣던 중이면 그대로 둠
-    if (state.source.type === "library" || !state.tracks.length) {
+    else if (state.source.type === "library" || !state.tracks.length) {
       state.source = { type: "library" };
       state.tracks = tracks;
       rebuildOrder();
@@ -480,6 +488,38 @@
     state.tracks = tracks;
     state.pos = -1;
     rebuildOrder();
+    saveQueue();
+  }
+
+  // 지난번 듣던 큐 기억: 폴더, 출처, 곡 id 순서, 섞인 순서 (localStorage "dm:queue"). 지금 곡은 "dm:last:<폴더>"
+  function saveQueue() {
+    if (!state.folder || !state.tracks.length) return;
+    store.set("queue", { folderId: state.folder.id, source: state.source, ids: state.tracks.map((t) => t.id), order: state.order });
+  }
+  function restoreQueue(library) {
+    const q = store.get("queue", null);
+    if (!q || !state.folder || q.folderId !== state.folder.id || !Array.isArray(q.ids) || !q.source) return false;
+    const byId = new Map(library.map((t) => [t.id, t]));
+    const tracks = q.ids.map((id) => byId.get(id) || otherFolderTrack(id)).filter(Boolean);
+    if (!tracks.length) return false;
+    state.source = q.source;
+    state.tracks = tracks;
+    // 곡이 그대로면 섞였던 순서까지, 달라졌으면 지금 섞기 설정으로 새로
+    const okOrder = Array.isArray(q.order) && q.order.length === tracks.length && tracks.length === q.ids.length &&
+      [...q.order].sort((a, b) => a - b).every((x, i) => x === i);
+    const wasShuffled = okOrder && q.order.some((x, i) => x !== i);
+    if (okOrder && wasShuffled === !!state.shuffle) state.order = q.order.slice();   // 섞기 설정이 그때와 같으면 그 순서 그대로
+    else { state.pos = -1; rebuildOrder(); }
+    const last = store.get("last:" + state.folder.id, null);
+    const i = last ? tracks.findIndex((t) => t.id === last.id) : -1;
+    state.pos = i >= 0 ? state.order.indexOf(i) : 0;
+    return true;
+  }
+  // 플레이리스트에 담긴 다른 폴더 곡: 보관함(tagDb)에 있으면 그 정보로
+  function otherFolderTrack(id) {
+    const e = state.tagDb.get(id);
+    if (!e) return null;
+    return { id, name: e.tags.title, title: e.tags.title, size: 0, mimeType: "audio/", folderName: e.folderName, tags: e.tags };
   }
 
   // 곡 한 줄 (전체 곡·플레이리스트·바텀시트가 같이 씀)
@@ -612,6 +652,7 @@
     el.trackList.classList.toggle("hidden", !songs);
     el.libGroups.classList.toggle("hidden", songs);
     el.btnGroupEdit.classList.add("hidden"); el.btnMerge.classList.add("hidden"); el.libGroups.classList.remove("gediting");
+    placePlaybar(songs);
     if (songs) {
       el.libQ.placeholder = "곡 찾기 (제목·가수·앨범·폴더)";
       renderTracks();
@@ -708,6 +749,40 @@
     });
     el.tracksCount.textContent = q ? `${shown} / ${g.tracks.length}곡` : `${g.tracks.length}곡`;
     el.searchEmpty.classList.toggle("hidden", !(q && !shown));
+  }
+
+  // 지금 보이는 목록 = 재생할 곡들과 출처 이름 (곡 / 이름 목록 / 묶음 안, 검색으로 걸렀으면 그 결과만)
+  function visibleList() {
+    const v = state.libView, raw = el.libQ.value.trim(), q = norm(raw);
+    const searched = q ? { type: "view", name: `검색: ${raw}` } : null;
+    if (v.kind === "songs" || !KINDS[v.kind]) {
+      const tracks = q ? state.library.filter((t) => matchTrack(t, q)) : state.library.slice();
+      return { tracks, source: searched || { type: "library" } };
+    }
+    const k = KINDS[v.kind], groups = buildGroups(v.kind);
+    const g = v.group != null ? groups.find((x) => x.key === v.group) : null;
+    if (g) {
+      const tracks = q ? g.tracks.filter((t) => matchTrack(t, q)) : g.tracks.slice();
+      return { tracks, source: searched || { type: "group", kind: g.kind, key: g.key, name: g.name } };
+    }
+    // 이름 목록: 이름 순 → (각 묶음 안) 앨범 → 트랙 순으로 이어 붙임
+    const shown = q ? groups.filter((x) => norm(x.name).includes(q) || norm(x.sub).includes(q)) : groups;
+    return { tracks: shown.flatMap((x) => x.tracks), source: searched || { type: "view", name: `${k.label}: 전체` } };
+  }
+  // [▶ 재생] 처음부터 차례로, [⇄ 섞기] 섞어서 — 하단 섞기 아이콘도 같이 바뀜
+  function playVisible(shuffle) {
+    const { tracks, source } = visibleList();
+    if (!tracks.length) { toast("재생할 곡이 없어요"); return; }
+    setShuffle(shuffle);
+    setQueue(source, tracks);
+    state.pos = 0; playCurrent();
+  }
+  // 재생 버튼 줄은 목록 바로 위에 (곡 목록이면 곡 위, 분류면 이름 목록·묶음 곡 위)
+  function placePlaybar(songs) {
+    const anchor = songs ? el.trackList : el.groupList;
+    if (el.libPlaybar.nextElementSibling !== anchor) anchor.before(el.libPlaybar);
+    const none = !state.library.length;
+    el.btnLibPlay.disabled = el.btnLibShuffle.disabled = none;
   }
 
   // 묶음을 재생 큐로 — i가 없으면 처음부터(섞기면 섞인 첫 곡)
@@ -1361,7 +1436,7 @@
   function playPlaylist(shuffle) {
     const p = getPl(state.openPl);
     if (!p || !p.items.length) return;
-    if (state.shuffle !== shuffle) { state.shuffle = shuffle; store.set("shuffle", shuffle); el.btnShuffle.classList.toggle("active", shuffle); }
+    setShuffle(shuffle);
     setQueue({ type: "playlist", name: p.name }, plItemsToTracks(p));
     state.pos = 0; playCurrent();
   }
@@ -1744,6 +1819,7 @@
       if (startAt) el.audio.currentTime = startAt;
       await el.audio.play();
       store.set("last:" + state.folder.id, { id: t.id });
+      saveQueue();
       updateMediaSession(t);
       prefetchNext();
       loadArt(t, url).then((art) => { if (art && currentTrack() === t) { showArt(art); updateMediaSession(t, art); } });
@@ -1762,9 +1838,10 @@
     const artist = (t.tags && t.tags.artist) || "";
     el.npTitle.textContent = dispTitle(t);
     const src = state.source;
-    el.npSub.textContent = src.type === "playlist" || src.type === "group"
-      ? [src.kind === "artist" ? "" : artist, `♪ ${src.name}`].filter(Boolean).join(" · ")
-      : (tagSub(t) || t.folderName || state.folder.name);
+    const from = src.type === "playlist" ? src.name
+      : src.type === "group" ? `${(KINDS[src.kind] || {}).label || ""}: ${src.name}`
+      : src.type === "view" ? src.name : "전체 곡";
+    el.npSub.textContent = [src.type === "group" && src.kind === "artist" ? "" : artist, `♪ ${from}`].filter(Boolean).join(" · ");
     document.title = dispTitle(t) + " · Drive Music";
   }
   // 하단 플레이어 초록 네모: 표지가 있으면 표지, 없으면 음표
@@ -1806,7 +1883,14 @@
     state.shuffle = !state.shuffle;
     store.set("shuffle", state.shuffle);
     el.btnShuffle.classList.toggle("active", state.shuffle);
-    rebuildOrder();
+    rebuildOrder();   // 끄면 원래 순서로 (지금 곡은 그대로)
+    saveQueue();
+  }
+  // 섞기 켜기/끄기를 정하고 하단 섞기 아이콘도 맞춤 (큐는 부르는 쪽에서 새로 만듦)
+  function setShuffle(on) {
+    if (state.shuffle === on) return;
+    state.shuffle = on; store.set("shuffle", on);
+    el.btnShuffle.classList.toggle("active", on);
   }
   function cycleRepeat() {
     state.repeat = state.repeat === "off" ? "all" : state.repeat === "all" ? "one" : "off";
@@ -1901,6 +1985,8 @@
   };
   el.btnGroupBack.onclick = () => { setLibView(state.libView.kind); mainEl.scrollTop = groupsScroll; };
   el.btnGroupPlay.onclick = () => { const g = currentGroup(); if (g) playGroup(g); };
+  el.btnLibPlay.onclick = () => playVisible(false);
+  el.btnLibShuffle.onclick = () => playVisible(true);
 
   // 플레이리스트
   el.btnBack.onclick = () => { if (el.sTags.classList.contains("show")) closeTagEditor(); else closePlaylist(); };

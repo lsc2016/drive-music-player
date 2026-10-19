@@ -346,13 +346,18 @@
         <button class="chip hidden" id="btn-group-edit">편집</button>
         <button class="iconbtn" id="btn-lib-menu" title="보관함 메뉴"><svg viewBox="0 0 24 24"><path d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
       </div>
+      <!-- 목록 머리: 지금 보이는 목록 전체 재생/섞기 (곡·이름 목록·묶음 안 어디서나 같은 자리) -->
+      <div class="plhead" id="lib-playbar">
+        <button class="chip primary" id="btn-lib-play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>재생</button>
+        <button class="chip" id="btn-lib-shuffle"><svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>섞기</button>
+      </div>
       <div class="list" id="track-list"></div>
       <!-- 아티스트·앨범·작곡가·장르: 이름 목록, 누르면 그 안의 곡 -->
       <div id="lib-groups" class="hidden">
         <div class="grouphead hidden" id="group-head">
           <button class="iconbtn" id="btn-group-back" title="이름 목록으로"><svg viewBox="0 0 24 24"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></button>
           <div class="t"><div class="n" id="group-title"></div><div class="s" id="group-sub"></div></div>
-          <button class="chip primary" id="btn-group-play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>재생</button>
+          <button class="chip primary hidden" id="btn-group-play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>재생</button>
         </div>
         <div class="list" id="group-list"></div>
         <button class="mergebar hidden" id="btn-merge">합치기</button>

@@ -36,10 +36,13 @@
 - 언어 태그: `tags.language`, 값은 `LANGS`(한국어·중국어·영어·일본어·기타) 다섯 개만. `detectLang(title, artist)`가 글자 모양으로 짐작(한글 → 가나 → 한자 → 로마자 → 기타 순). 태그 읽을 때(`pickTags`·`fallbackTags`) 채우고, 언어 칸 없는 예전 보관함 줄은 `attachTags()`가 열 때 채워 저장. 곡 태그 편집 폼에선 `<select>`, 제목·아티스트를 고치면 직접 고르기 전까지 따라 바뀜. 이름 바꾸기도 select, 합치기 창에 "새 이름" 없음. 보관함 분류(`KINDS.language`)는 LANGS 순서로 정렬.
 - library.md 줄 모양: `- 파일ID | 제목 | 아티스트 | 앨범 | 앨범아티스트 | 작곡가 | 장르 | 트랙 | 연도 | 폴더 | 언어 [| edited]`. `parseLibrary`는 끝의 edited → 언어(LANGS 값 또는 빈칸, 칸이 10개 이상일 때만) 순으로 떼어냄 — 언어 칸 없는 예전 줄도 그대로 읽힘.
 - 태그 목록 편집 화면 `#s-tags`(보관함 ⋯ 메뉴 → `openTagEditor()`, 헤더 ← 는 `closeTagEditor()`): `#tag-kinds`로 종류 고름(`dm:tagedkind` 기억), `renderTagEditor()`가 `buildGroups(kind)` 값 목록. 줄마다 ✎(`openRename`)와 ≡(`.grip`). 끌기는 HTML5 drag가 아니라 pointer 이벤트(`startTagDrag`: setPointerCapture, 떠다니는 복사본 `.dragghost`, `elementFromPoint`로 아래 줄 찾기, 끝 근처면 `mainEl` 자동 스크롤) — 손가락·마우스 둘 다. 놓으면 `openDropMerge(src, dst)`: 남길 이름 둘 중 고르기, "N곡 바뀜" 표시 → `retagGroups(kind, [바뀌는 쪽만], 이름)`라 실제로 바뀐 곡에만 edited가 붙음. 고친 뒤 `afterLibEdit()`가 이 화면도 다시 그림.
+- 목록 전체 재생: 보관함의 `#lib-playbar`(`.plhead` 칩 두 개, 플레이리스트 상세 재생/섞어서와 같은 모양) 하나를 `placePlaybar()`가 목록 바로 위로 옮겨 씀(곡이면 `#track-list` 위, 분류면 `#group-list` 위 = 묶음 안이면 `#group-head` 아래). `visibleList()`가 지금 보이는 목록과 출처를 만듦: 곡 → `{type:"library"}`(검색 중이면 걸러진 곡), 이름 목록 → 보이는 묶음들 곡을 이어 붙여 `{type:"view", name:"아티스트: 전체"}`, 묶음 안 → `{type:"group", …}`, 검색 글자가 있으면 어디서든 `{type:"view", name:"검색: …"}`. `playVisible(shuffle)` = `setShuffle()`(하단 섞기 아이콘까지 맞춤) → `setQueue()` → 처음부터. 묶음 머리의 예전 `#btn-group-play`는 숨김. 하단 작은 글씨는 `showNowPlayingText()`가 "♪ 전체 곡 / 아티스트: 10cm / 검색: 사랑 / 플레이리스트 이름".
+- 큐 기억: `setQueue`·섞기·재생 때 `saveQueue()` → localStorage `dm:queue` = {folderId, source, ids, order}. 폴더를 처음 열 때(`setLibrary`, 아직 큐 없음) `restoreQueue()`가 같은 폴더면 출처·곡·섞인 순서(섞기 설정이 그때와 같을 때만)를 되살리고 `dm:last:<폴더>` 곡에 맞춤 → 하단 ▶가 그 큐를 이어 틂. 다른 폴더 곡(플레이리스트)은 `otherFolderTrack()`이 tagDb로 만듦. 로그아웃하면 지움.
 - 바텀시트 두 개: `#sheet`(플레이리스트 담기, 예전 그대로), `#msheet`(만능: `openMSheet({title, sub, body, ok})` — 메뉴·합치기·이름 바꾸기·태그 편집).
 
 ## 작업 원칙
 - 지우고 새로 만들지 말고 있는 것에 더하고 보완하기. 파일 3개 구조와 "설정은 config.js 한 곳" 원칙 유지.
+- **모든 목록 화면은 머리(제목 줄 바로 아래)에 [▶ 재생](초록) [⇄ 섞기](회색) 칩을 둔다** — 누르면 "지금 보이는 그 목록"(검색으로 걸렀으면 결과만)이 큐가 됨. 새 목록 화면을 만들면 같은 모양·같은 자리로.
 - 화면의 개념을 흐리지 않기: 주(主)는 "곡 목록 + 하단 플레이어", 폴더 바꾸기·새로고침·로그아웃은 상단 아이콘(부가 기능).
 - 설명은 쉬운 말로. 전문 용어가 필요하면 생김새나 비유로 풀어서.
 - 새 기능 넣으면 README의 "쓰는 법"·"자주 나오는 문제"도 맞춰 고치기.
