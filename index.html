@@ -159,6 +159,7 @@
     .kinds::-webkit-scrollbar { display: none; }
     .kinds button { flex: none; padding: 7px 14px; border-radius: 999px; background: var(--panel); color: var(--muted); font-weight: 600; font-size: 14px; white-space: nowrap; }
     .kinds button.on { background: var(--accent); color: #06130a; }
+    .kinds .kinds-sep { flex: none; width: 1px; align-self: stretch; margin: 6px 4px; background: #3a3f4a; }   /* 보관함 칩 | 플레이리스트 칩 */
     /* 묶음(아티스트·앨범…) 안으로 들어갔을 때 맨 위 줄 */
     .grouphead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
     .grouphead .t { flex: 1; min-width: 0; }
@@ -324,21 +325,20 @@
 
   <!-- 3) 재생목록 -->
   <section class="screen" id="s-tracks">
-    <div class="tabs">
-      <button class="on" id="tab-lib">보관함</button>
-      <button id="tab-pl">플레이리스트</button>
+    <!-- 유일한 메뉴: 보관함 분류 칩 | 플레이리스트 칩 (좁으면 옆으로 밀기) -->
+    <div class="kinds" id="lib-kinds">
+      <button class="on" data-kind="songs">곡</button>
+      <button data-kind="artist">아티스트</button>
+      <button data-kind="album">앨범</button>
+      <button data-kind="composer">작곡가</button>
+      <button data-kind="genre">장르</button>
+      <button data-kind="language">언어</button>
+      <span class="kinds-sep" aria-hidden="true"></span>
+      <button data-kind="playlists">플레이리스트</button>
     </div>
 
-    <!-- 탭 1: 보관함 (폴더의 전체 곡을 곡/아티스트/앨범/작곡가/장르로 나눠 보기) -->
+    <!-- 보관함 (폴더의 전체 곡을 곡/아티스트/앨범/작곡가/장르/언어로 나눠 보기) -->
     <div id="view-lib">
-      <div class="kinds" id="lib-kinds">
-        <button class="on" data-kind="songs">곡</button>
-        <button data-kind="artist">아티스트</button>
-        <button data-kind="album">앨범</button>
-        <button data-kind="composer">작곡가</button>
-        <button data-kind="genre">장르</button>
-        <button data-kind="language">언어</button>
-      </div>
       <div class="searchrow">
         <input id="lib-q" type="search" placeholder="곡 찾기 (제목·가수·앨범·폴더)" autocomplete="off" enterkeyhint="search" />
       </div>
@@ -369,7 +369,7 @@
       <div class="empty hidden" id="search-empty">찾는 곡이 없어요.<br><small>다른 글자로 찾아보거나, 칸을 비우면 다시 전부 보여요.</small></div>
     </div>
 
-    <!-- 탭 2: 플레이리스트 목록 -->
+    <!-- 플레이리스트 칩: 플레이리스트 목록 + 새로 만들기 -->
     <div id="view-pl" class="hidden">
       <div class="sectionhead">
         <h2>플레이리스트</h2>

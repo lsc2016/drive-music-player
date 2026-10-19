@@ -25,7 +25,7 @@
     btnBack: $("btn-back"), btnFolder: $("btn-folder"), btnRefresh: $("btn-refresh"), btnLogout: $("btn-logout"),
     sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"), sTags: $("s-tags"),
     tagKinds: $("tag-kinds"), tagsQ: $("tags-q"), tagList: $("tag-list"), tagsCount: $("tags-count"),
-    tabLib: $("tab-lib"), tabPl: $("tab-pl"), viewLib: $("view-lib"), viewPl: $("view-pl"),
+    viewLib: $("view-lib"), viewPl: $("view-pl"),
     plList: $("pl-list"), plEmpty: $("pl-empty"), plSync: $("pl-sync"), plNewName: $("pl-new-name"), btnPlNew: $("btn-pl-new"),
     plTitle: $("pl-title"), plCount: $("pl-count"), plTracks: $("pl-tracks"), plTracksEmpty: $("pl-tracks-empty"),
     btnPlPlay: $("btn-pl-play"), btnPlShuffle: $("btn-pl-shuffle"), btnPlEdit: $("btn-pl-edit"),
@@ -393,7 +393,7 @@
     el.trackList.classList.remove("hidden"); el.libGroups.classList.add("hidden");   // 분류 화면이어도 "찾는 중"은 보이게
     el.tracksEmpty.classList.add("hidden");
     el.searchEmpty.classList.add("hidden");
-    showTab("lib");
+    showTab(store.get("tab", "lib") === "pl" ? "pl" : "lib");
     const my = ++state.openSeq;
     const tagP = loadTagDb();   // 이 기기에 남은 태그 복사본은 여기서 바로 들어옴
     const cached = readLibCache(folder.id);
@@ -647,7 +647,7 @@
 
   function renderLib() {
     const v = state.libView;
-    for (const b of el.libKinds.querySelectorAll("button")) b.classList.toggle("on", b.dataset.kind === v.kind);
+    markKindChips();
     const songs = v.kind === "songs" || !KINDS[v.kind];
     el.trackList.classList.toggle("hidden", !songs);
     el.libGroups.classList.toggle("hidden", songs);
@@ -1166,12 +1166,19 @@
   }
 
   // ── 탭 ─────────────────────────────────────────────────────
+  // 보관함("lib") / 플레이리스트("pl") 바꾸기 — 예전엔 큰 탭 두 개, 지금은 분류 칩 줄의 칩이 부름. 마지막 것은 기억
+  const plShown = () => !el.viewPl.classList.contains("hidden");
   function showTab(which) {
-    el.tabLib.classList.toggle("on", which === "lib");
-    el.tabPl.classList.toggle("on", which === "pl");
     el.viewLib.classList.toggle("hidden", which !== "lib");
     el.viewPl.classList.toggle("hidden", which !== "pl");
+    store.set("tab", which);
+    markKindChips();
     if (which === "pl") renderPlaylistList();
+  }
+  // 칩 줄에서 켜진 칩: 플레이리스트를 보는 중이면 "플레이리스트", 아니면 보관함 분류
+  function markKindChips() {
+    const on = plShown() ? "playlists" : state.libView.kind;
+    for (const b of el.libKinds.querySelectorAll("button")) b.classList.toggle("on", b.dataset.kind === on);
   }
 
   // ── 플레이리스트: 드라이브의 .md 파일로 저장 ─────────────────
@@ -1979,6 +1986,11 @@
   // 보관함 분류
   el.libKinds.onclick = (e) => {
     const b = e.target.closest("button[data-kind]"); if (!b) return;
+    if (b.dataset.kind === "playlists") { showTab("pl"); mainEl.scrollTop = 0; b.scrollIntoView({ block: "nearest", inline: "nearest" }); return; }
+    if (plShown()) {   // 플레이리스트에서 보관함으로: 같은 분류면 보던 자리 그대로
+      showTab("lib");
+      if (b.dataset.kind === state.libView.kind) { renderLib(); return; }
+    }
     setLibView(b.dataset.kind);
     mainEl.scrollTop = 0;
     b.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1997,8 +2009,6 @@
     renderTagEditor();
   };
   el.tagsQ.addEventListener("input", renderTagEditor);
-  el.tabLib.onclick = () => showTab("lib");
-  el.tabPl.onclick = () => showTab("pl");
   el.btnPlNew.onclick = () => { if (createPlaylist(el.plNewName.value)) { el.plNewName.value = ""; renderPlaylistList(); } };
   el.plNewName.addEventListener("keydown", (e) => { if (e.key === "Enter") el.btnPlNew.click(); });
   el.btnPlPlay.onclick = () => playPlaylist(false);
