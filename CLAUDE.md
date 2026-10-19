@@ -3,7 +3,7 @@
 구글 드라이브를 파일 저장소로 쓰는 음악 플레이어 웹앱. 맥 브라우저와 휴대폰 브라우저 둘 다에서 씀.
 
 ## 구조 (파일 3개가 전부, 빌드 도구 없음)
-- `index.html` — 화면과 스타일(CSS는 이 파일 안에 있음). 화면 3개: 로그인 `#s-login`, 폴더 고르기 `#s-folder`, 재생목록 `#s-tracks`. 하단 고정 플레이어 `#player`.
+- `index.html` — 화면과 스타일(CSS는 이 파일 안에 있음). 홈 화면 앱은 `viewport-fit=cover`+`black-translucent`라 화면이 시계·노치 줄 밑까지 깔림 → 맨 위 `header`는 `--safe-t`(env safe-area-inset-top)만큼, 아래 고정 것들은 `--safe-b`만큼 띄움. 위·아래에 붙는 걸 새로 만들면 이 두 값을 꼭 더할 것. 화면 3개: 로그인 `#s-login`, 폴더 고르기 `#s-folder`, 재생목록 `#s-tracks`. 하단 고정 플레이어 `#player`.
 - `app.js` — 모든 동작. 즉시실행함수 하나 안에 섹션별로 나뉘어 있음: 로그인(토큰) → 드라이브 API → 폴더 화면 → 재생목록 화면 → 재생 순서 → 파일 받기 → 재생 제어 → Media Session → 이벤트 → 시작.
 - `config.js` — 사용자가 손대는 설정 (`CLIENT_ID`, `DEFAULT_FOLDER_NAME` 기본 "Music", `INCLUDE_SUBFOLDERS`). 코드에서는 `window.APP_CONFIG`로 읽음.
 - `icons/`(icon-32·180·192·512.png, 초록 정사각형 + 흰 음표) + `manifest.json` — "홈 화면에 추가"용 앱 아이콘·이름. `index.html` `<head>`에서 연결, 경로는 GitHub Pages 하위 경로 때문에 전부 상대경로. 아이콘을 바꾸면 PNG 네 개를 같이 다시 만들기(`sips`로 SVG→PNG).

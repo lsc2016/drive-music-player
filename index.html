@@ -23,6 +23,9 @@
       --danger: #e5484d;
       --radius: 14px;
       --safe-b: env(safe-area-inset-bottom, 0px);
+      --safe-t: env(safe-area-inset-top, 0px);      /* 홈 화면 앱: 맨 위 시계·노치 줄 높이 */
+      --safe-l: env(safe-area-inset-left, 0px);
+      --safe-r: env(safe-area-inset-right, 0px);
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; margin: 0; }
@@ -40,8 +43,8 @@
     /* ── 상단바 ── */
     header {
       display: flex; align-items: center; gap: 10px;
-      padding: 12px 16px; border-bottom: 1px solid #262a33;
-      position: sticky; top: 0; background: var(--bg); z-index: 5;
+      padding: calc(12px + var(--safe-t)) calc(16px + var(--safe-r)) 12px calc(16px + var(--safe-l)); border-bottom: 1px solid #262a33;
+      position: sticky; top: 0; background: var(--bg); z-index: 5;   /* 시계 줄 밑으로 아이콘이 숨지 않게 그 높이만큼 내림 */
     }
     header h1 { font-size: 17px; margin: 0; flex: 1; font-weight: 700; letter-spacing: .2px; }
     header h1 small { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 13px; }
