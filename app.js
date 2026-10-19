@@ -15,6 +15,7 @@
   const FAV = "즐겨찾기";                         // ♥ 누르면 들어가는 기본 플레이리스트
   const LIB_FILE = "drive-music-library.md";     // 드라이브에 저장되는 곡 태그(보관함) 파일
   const TAG_WORKERS = 4;                         // 태그는 동시에 4곡씩만 읽음
+  const LANGS = ["한국어", "중국어", "영어", "일본어", "기타"];   // 언어 태그 값 (이 순서로 보여줌)
   const AUDIO_EXT = ["mp3", "m4a", "flac", "wav", "ogg", "aac", "opus", "wma", "aiff"];
 
   // ── 화면 요소 ──────────────────────────────────────────────
@@ -22,7 +23,8 @@
   const el = {
     hdrSub: $("hdr-sub"),
     btnBack: $("btn-back"), btnFolder: $("btn-folder"), btnRefresh: $("btn-refresh"), btnLogout: $("btn-logout"),
-    sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"),
+    sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"), sTags: $("s-tags"),
+    tagKinds: $("tag-kinds"), tagsQ: $("tags-q"), tagList: $("tag-list"), tagsCount: $("tags-count"),
     tabLib: $("tab-lib"), tabPl: $("tab-pl"), viewLib: $("view-lib"), viewPl: $("view-pl"),
     plList: $("pl-list"), plEmpty: $("pl-empty"), plSync: $("pl-sync"), plNewName: $("pl-new-name"), btnPlNew: $("btn-pl-new"),
     plTitle: $("pl-title"), plCount: $("pl-count"), plTracks: $("pl-tracks"), plTracksEmpty: $("pl-tracks-empty"),
@@ -102,6 +104,15 @@
     return b + " B";
   };
   const stripExt = (n) => n.replace(/\.[^.]+$/, "");
+  // 제목·아티스트 글자 모양으로 언어 짐작: 한글 → 한국어, 가나 → 일본어, 한자만 → 중국어, 로마자 → 영어, 그 밖 → 기타
+  function detectLang(...parts) {
+    const s = parts.filter(Boolean).join(" ");
+    if (/[\uAC00-\uD7A3\u1100-\u11FF\u3130-\u318F]/.test(s)) return "한국어";
+    if (/[\u3040-\u30FF\u31F0-\u31FF\uFF66-\uFF9F]/.test(s)) return "일본어";
+    if (/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/.test(s)) return "중국어";
+    if (/[A-Za-z]/.test(s)) return "영어";
+    return "기타";
+  }
   // 화면에 보이는 제목·부제 (태그가 있으면 태그, 없으면 파일 이름·크기)
   const dispTitle = (t) => (t.tags && t.tags.title) || t.title;
   const tagSub = (t) => {
@@ -111,12 +122,13 @@
   };
   const isAudioName = (n) => AUDIO_EXT.includes((n.split(".").pop() || "").toLowerCase());
   const show = (screen) => {
-    for (const s of [el.sLogin, el.sFolder, el.sTracks, el.sPl]) s.classList.toggle("show", s === screen);
+    for (const s of [el.sLogin, el.sFolder, el.sTracks, el.sPl, el.sTags]) s.classList.toggle("show", s === screen);
     const signedIn = screen !== el.sLogin;
-    el.btnBack.classList.toggle("hidden", screen !== el.sPl);
-    el.btnFolder.classList.toggle("hidden", !signedIn || screen === el.sPl);
+    const sub = screen === el.sPl || screen === el.sTags;   // 뒤로 버튼이 있는 하위 화면
+    el.btnBack.classList.toggle("hidden", !sub);
+    el.btnFolder.classList.toggle("hidden", !signedIn || sub);
     el.btnRefresh.classList.toggle("hidden", screen !== el.sTracks);
-    el.btnLogout.classList.toggle("hidden", !signedIn || screen === el.sPl);
+    el.btnLogout.classList.toggle("hidden", !signedIn || sub);
     window.scrollTo(0, 0);
   };
   let toastTimer = null;
@@ -445,11 +457,13 @@
     album:    { label: "앨범", unit: "개", unknown: "알 수 없는 앨범", get: (g) => g.album },
     composer: { label: "작곡가", unit: "명", unknown: "알 수 없는 작곡가", get: (g) => g.composer },
     genre:    { label: "장르", unit: "개", unknown: "알 수 없는 장르", get: (g) => g.genre },
+    language: { label: "언어", unit: "개", unknown: "언어 없음", get: (g) => g.language },
   };
   const SVG_KIND = {
     artist: `<svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`,
     album: `<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 14.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zm0-5.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>`,
     composer: `<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm17.71-10.21a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>`,
+    language: `<svg viewBox="0 0 24 24"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7 1.62-4.33L19.12 17h-3.24z"/></svg>`,
     genre: `<svg viewBox="0 0 24 24"><path d="m21.41 11.58-9-9A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7c0 .55.22 1.05.59 1.42l9 9a2 2 0 0 0 2.82 0l7-7a2 2 0 0 0 0-2.84zM5.5 7a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>`,
   };
   const SVG_PLAY = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
@@ -480,7 +494,8 @@
       tracks.sort(kind === "album" ? byTrack : (a, b) => libColl.compare(a.tags.album || "", b.tags.album || "") || byTrack(a, b));
       return { kind, key, name: unknown ? KINDS[kind].unknown : kind === "album" ? albumName : key, sub, unknown, tracks };
     });
-    out.sort((a, b) => (a.unknown - b.unknown) || libColl.compare(a.name, b.name) || libColl.compare(a.sub, b.sub));   // 알 수 없음은 맨 아래
+    const langIdx = (g) => (kind === "language" ? (LANGS.indexOf(g.name) + 1 || 99) : 0);   // 언어는 정해진 순서
+    out.sort((a, b) => (a.unknown - b.unknown) || langIdx(a) - langIdx(b) || libColl.compare(a.name, b.name) || libColl.compare(a.sub, b.sub));   // 알 수 없음은 맨 아래
     return out;
   }
 
@@ -611,7 +626,13 @@
   // ── 보관함 고치기 (음악 파일은 그대로, drive-music-library.md만 바꿈) ──
   // 보관함 곡에 태그 붙이기 — 보관함에 없으면 읽기 전까지 파일명으로 (표지 유무는 아직 모름)
   function attachTags() {
-    for (const t of state.library) { const e = state.tagDb.get(t.id); t.tags = e ? e.tags : { ...fallbackTags(t), hasArt: null }; }
+    let filled = 0;
+    for (const t of state.library) {
+      const e = state.tagDb.get(t.id);
+      if (e && !LANGS.includes(e.tags.language)) { e.tags.language = detectLang(e.tags.title, e.tags.artist); filled++; }
+      t.tags = e ? e.tags : { ...fallbackTags(t), hasArt: null };
+    }
+    if (filled) saveLibrary();   // 언어를 새로 채웠으면 보관함 파일에도 적어둠
   }
   // 고칠 곡의 보관함 칸 (아직 태그를 못 읽은 곡이면 지금 값으로 만듦)
   function ensureEntry(t) {
@@ -630,6 +651,7 @@
   function afterLibEdit() {
     saveLibrary();
     renderLib();
+    if (el.sTags.classList.contains("show")) renderTagEditor();
     if (state.openPl) renderPlaylistDetail();
     const cur = currentTrack();
     if (cur) { const e = state.tagDb.get(cur.id); if (e) cur.tags = e.tags; showNowPlayingText(cur); updateMediaSession(cur); }
@@ -733,7 +755,7 @@
     nr.querySelector(".chk").onclick = () => { choice = "__new"; paint(); input.focus(); };
     input.addEventListener("focus", () => { choice = "__new"; paint(); });
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") el.msheetOk.click(); });
-    rows.push(["__new", nr]); body.appendChild(nr);
+    if (kind !== "language") { rows.push(["__new", nr]); body.appendChild(nr); }   // 언어는 정해진 다섯 값만
     paint();
     openMSheet({
       title: `${k.label} ${groups.length}개 합치기`, sub: `${total}곡을 한 ${k.label}(으)로 — 남길 이름을 고르세요`, body,
@@ -755,8 +777,10 @@
   function openRename(g) {
     const kind = g.kind, k = KINDS[kind];
     fillDatalists();
-    const body = elt(`<label class="field">새 ${k.label} 이름<input autocomplete="off" list="dl-${kind}" /></label>`);
-    const input = body.querySelector("input");
+    const body = kind === "language"
+      ? elt(`<label class="field">바꿀 언어<select>${LANGS.map((l) => `<option>${l}</option>`).join("")}</select></label>`)
+      : elt(`<label class="field">새 ${k.label} 이름<input autocomplete="off" list="dl-${kind}" /></label>`);
+    const input = body.querySelector("input, select");
     input.value = g.unknown ? "" : g.name;
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") el.msheetOk.click(); });
     openMSheet({
@@ -768,7 +792,7 @@
         return false;
       } },
     });
-    setTimeout(() => input.select(), 250);
+    if (input.select) setTimeout(() => input.select(), 250);
   }
 
   // 곡 줄 ⋯ 메뉴
@@ -783,7 +807,8 @@
   // 곡 하나 태그 고치기
   const TAG_FIELDS = [
     ["title", "제목"], ["artist", "아티스트", "artist"], ["album", "앨범", "album"], ["albumArtist", "앨범 아티스트", "artist"],
-    ["composer", "작곡가", "composer"], ["genre", "장르", "genre"], ["track", "트랙", null, "numeric"], ["year", "연도", null, "numeric"],
+    ["composer", "작곡가", "composer"], ["genre", "장르", "genre"], ["language", "언어", null, "select"],
+    ["track", "트랙", null, "numeric"], ["year", "연도", null, "numeric"],
   ];
   function openTagForm(t) {
     fillDatalists();
@@ -793,11 +818,13 @@
     const inputs = {};
     let pair = null;
     for (const [key, label, dl, mode] of TAG_FIELDS) {
-      const f = elt(`<label class="field">${label}<input autocomplete="off" /></label>`);
-      const input = f.querySelector("input");
+      const f = mode === "select"
+        ? elt(`<label class="field">${label}<select>${LANGS.map((l) => `<option>${l}</option>`).join("")}</select></label>`)
+        : elt(`<label class="field">${label}<input autocomplete="off" /></label>`);
+      const input = f.querySelector("input, select");
       if (dl) input.setAttribute("list", "dl-" + dl);
-      if (mode) input.inputMode = mode;
-      input.value = g[key] || "";
+      if (mode && mode !== "select") input.inputMode = mode;
+      input.value = g[key] || (key === "language" ? detectLang(g.title, g.artist) : "");
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") el.msheetOk.click(); });
       inputs[key] = input;
       if (key === "track" || key === "year") {   // 트랙·연도는 한 줄에 둘
@@ -805,6 +832,11 @@
         pair.appendChild(f);
       } else body.appendChild(f);
     }
+    let langTouched = false;
+    inputs.language.addEventListener("change", () => { langTouched = true; });
+    for (const k of ["title", "artist"]) inputs[k].addEventListener("input", () => {
+      if (!langTouched) inputs.language.value = detectLang(inputs.title.value, inputs.artist.value);
+    });
     openMSheet({
       title: "태그 편집", sub: `${t.name} · 음악 파일은 안 바뀌고 보관함에만 저장돼요`, body,
       ok: { label: "저장", fn: () => {
@@ -829,6 +861,7 @@
     const u = store.get("libundo", null);
     const body = document.createElement("div");
     body.style.cssText = "display:flex;flex-direction:column;gap:6px";
+    body.appendChild(menuRow("태그 목록 편집", "아티스트·앨범·작곡가·장르·언어 값 이름 바꾸기·합치기", () => { closeMSheet(); openTagEditor(); }));
     body.appendChild(menuRow("마지막 변경 되돌리기", u ? u.label : "되돌릴 변경이 없어요", () => { closeMSheet(); undoLast(); }, !u));
     body.appendChild(menuRow("태그 전부 다시 읽기", "새로고침 아이콘 길게 누르기와 같아요", () => { closeMSheet(); retagAll(); }));
     openMSheet({ title: "보관함", body });
@@ -843,6 +876,121 @@
     rememberUndo(dropEdits ? "태그 전부 다시 읽기 (고친 태그 버림)" : "태그 전부 다시 읽기");   // 다시 읽기 전 상태로 되돌릴 수 있게
     toast(dropEdits || !nEdited ? "태그를 처음부터 전부 다시 읽어요" : "고친 곡은 두고 나머지를 다시 읽어요");
     openFolder(state.folder, { retag: true, dropEdits });
+  }
+
+  // ── 태그 목록 편집 화면 ────────────────────────────────────
+  //  태그 종류를 고르면 값 목록(곡 수). ✎ 이름 바꾸기, ≡ 를 잡고 다른 값 위에 놓으면 합치기(몇 곡 바뀌는지 보고 확인)
+  //  끌기는 마우스·손가락 둘 다 되게 pointer 이벤트로 직접 (HTML5 drag는 폰에서 안 됨)
+  const SVG_GRIP = `<svg viewBox="0 0 24 24"><path d="M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z"/></svg>`;
+  function openTagEditor() {
+    state.tagEdKind = store.get("tagedkind", "artist");
+    if (!KINDS[state.tagEdKind]) state.tagEdKind = "artist";
+    el.tagsQ.value = "";
+    show(el.sTags);
+    el.hdrSub.textContent = state.folder ? state.folder.name : "";
+    renderTagEditor();
+  }
+  function closeTagEditor() {
+    show(el.sTracks);
+    el.hdrSub.textContent = state.folder ? state.folder.name : "";
+    showTab("lib");
+    renderLib();
+  }
+  function renderTagEditor() {
+    const kind = state.tagEdKind, k = KINDS[kind];
+    for (const b of el.tagKinds.querySelectorAll("button")) b.classList.toggle("on", b.dataset.kind === kind);
+    const groups = buildGroups(kind);
+    const q = norm(el.tagsQ.value);
+    const shown = q ? groups.filter((g) => norm(g.name).includes(q) || norm(g.sub).includes(q)) : groups;
+    el.tagsCount.textContent = groups.length ? `${q ? shown.length + " / " : ""}${groups.length}${k.unit}` : "";
+    el.tagList.innerHTML = "";
+    if (!state.library.length) { el.tagList.innerHTML = `<div class="empty">곡이 없어요. 먼저 폴더를 열어주세요.</div>`; return; }
+    for (const g of shown) {
+      const b = document.createElement("div");
+      b.className = "row";
+      b.dataset.key = g.key;
+      b.innerHTML = `<div class="ic grp${g.unknown ? " unknown" : ""}">${SVG_KIND[kind]}</div>
+        <div class="t"><div class="n"></div><div class="s"></div></div>`;
+      b.querySelector(".n").textContent = g.name;
+      b.querySelector(".s").textContent = [g.sub, `${g.tracks.length}곡`].filter(Boolean).join(" · ");
+      const pen = document.createElement("button");
+      pen.className = "act"; pen.title = "이름 바꾸기"; pen.innerHTML = SVG_PEN; pen.onclick = () => openRename(g);
+      const grip = document.createElement("div");
+      grip.className = "grip"; grip.title = "끌어서 다른 값 위에 놓으면 합치기"; grip.innerHTML = SVG_GRIP;
+      grip.addEventListener("pointerdown", (e) => startTagDrag(e, b, g, groups));
+      b.append(pen, grip);
+      el.tagList.appendChild(b);
+    }
+  }
+
+  // ≡ 를 잡고 끌기: 떠다니는 복사본이 손가락을 따라오고, 아래 있는 줄에 점선 표시. 놓으면 합치기 확인
+  function startTagDrag(e, row, g, groups) {
+    e.preventDefault();
+    const grip = e.currentTarget;
+    const r = row.getBoundingClientRect();
+    const ghost = row.cloneNode(true);
+    ghost.classList.add("dragghost");
+    Object.assign(ghost.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", margin: 0 });
+    document.body.appendChild(ghost);
+    row.classList.add("lifted");
+    const dy = e.clientY - r.top;
+    let over = null, lastY = e.clientY;
+    try { grip.setPointerCapture(e.pointerId); } catch {}
+    const scroller = setInterval(() => {   // 화면 위·아래 끝에 가까우면 목록을 굴림
+      const top = mainEl.getBoundingClientRect().top, bottom = Math.min(window.innerHeight, mainEl.getBoundingClientRect().bottom);
+      if (lastY < top + 60) mainEl.scrollTop -= 14; else if (lastY > bottom - 170) mainEl.scrollTop += 14;
+    }, 30);
+    const move = (ev) => {
+      lastY = ev.clientY;
+      ghost.style.top = (ev.clientY - dy) + "px";
+      const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+      const target = hit && hit.closest("#tag-list .row");
+      const next = target && target !== row ? target : null;
+      if (over !== next) { if (over) over.classList.remove("dropping"); over = next; if (over) over.classList.add("dropping"); }
+    };
+    const end = (drop) => {
+      clearInterval(scroller);
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", onUp);
+      grip.removeEventListener("pointercancel", onCancel);
+      ghost.remove(); row.classList.remove("lifted");
+      if (over) over.classList.remove("dropping");
+      if (drop && over) { const dst = groups.find((x) => x.key === over.dataset.key); if (dst && dst !== g) openDropMerge(g, dst); }
+    };
+    const onUp = () => end(true), onCancel = () => end(false);
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", onUp);
+    grip.addEventListener("pointercancel", onCancel);
+  }
+
+  // 끌어 포갠 두 값 합치기 확인: 어느 이름을 남길지 고르면 몇 곡이 바뀌는지 보여줌
+  function openDropMerge(src, dst) {
+    const kind = src.kind, k = KINDS[kind];
+    let keep = dst;   // 기본은 놓은 곳(아래 줄)의 이름
+    const body = document.createElement("div");
+    body.style.cssText = "display:flex;flex-direction:column;gap:6px";
+    const opts = [dst, src].map((g) => {
+      const other = g === dst ? src : dst;
+      const r = elt(`<button class="row"><div class="chk"></div><div class="t"><div class="n"></div><div class="s"></div></div></button>`);
+      r.querySelector(".n").textContent = `'${g.name}'로 합치기`;
+      r.querySelector(".s").textContent = `'${other.name}'의 ${other.tracks.length}곡이 바뀜`;
+      r.onclick = () => { keep = g; paint(); };
+      body.appendChild(r);
+      return [g, r];
+    });
+    const paint = () => {
+      for (const [g, r] of opts) r.classList.toggle("on", g === keep);
+      el.msheetOk.textContent = `합치기 (${(keep === dst ? src : dst).tracks.length}곡 바뀜)`;
+    };
+    openMSheet({
+      title: `${k.label} 합치기`, sub: `'${src.name}' ${src.tracks.length}곡 + '${dst.name}' ${dst.tracks.length}곡`, body,
+      ok: { label: "합치기", fn: () => {
+        const from = keep === dst ? src : dst;
+        retagGroups(kind, [from], keep.unknown ? "" : keep.name, kind === "album" ? albumArtistOf(keep) : null);
+        return false;
+      } },
+    });
+    paint();
   }
 
   // ── 탭 ─────────────────────────────────────────────────────
@@ -939,17 +1087,18 @@
 
   // ── 보관함: 곡 태그를 드라이브의 .md 파일로 저장 ─────────────
   //  파일 모양 (한 곡 한 줄, 앨범 표지는 안 넣음):
-  //  - 파일ID | 제목 | 아티스트 | 앨범 | 앨범아티스트 | 작곡가 | 장르 | 트랙 | 연도 | 폴더
+  //  - 파일ID | 제목 | 아티스트 | 앨범 | 앨범아티스트 | 작곡가 | 장르 | 트랙 | 연도 | 폴더 | 언어
   //  사용자가 앱에서 고친 곡은 줄 끝에 " | edited" — 태그를 다시 읽어도 그 값을 지킴
+  //  (언어 칸이 없는 예전 줄도 읽힘 → 열 때 제목·아티스트로 채움)
   const LIB_COLS = ["title", "artist", "album", "albumArtist", "composer", "genre", "track", "year"];
   const cell = (v) => String(v == null ? "" : v).replace(/\|/g, "∣").replace(/\s*\r?\n\s*/g, " ").trim();
   function serializeLibrary() {
     const lines = ["# Drive Music 보관함", "",
-      "<!-- 이 파일은 Drive Music 앱이 음악 파일 안의 태그를 읽어 적어둔 것입니다. 앨범 표지는 들어있지 않아요. 줄 모양: - 파일ID | 제목 | 아티스트 | 앨범 | 앨범아티스트 | 작곡가 | 장르 | 트랙 | 연도 | 폴더 (앱에서 고친 곡은 끝에 | edited) -->", ""];
+      "<!-- 이 파일은 Drive Music 앱이 음악 파일 안의 태그를 읽어 적어둔 것입니다. 앨범 표지는 들어있지 않아요. 줄 모양: - 파일ID | 제목 | 아티스트 | 앨범 | 앨범아티스트 | 작곡가 | 장르 | 트랙 | 연도 | 폴더 | 언어 (앱에서 고친 곡은 끝에 | edited) -->", ""];
     const coll = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
     const rows = [...state.tagDb.entries()].sort(([, a], [, b]) => coll.compare(a.folderName || "", b.folderName || "") ||
       (Number(a.tags.track) || 0) - (Number(b.tags.track) || 0) || coll.compare(a.tags.title || "", b.tags.title || ""));
-    for (const [id, e] of rows) lines.push(`- ${[id, ...LIB_COLS.map((k) => e.tags[k]), e.folderName, ...(e.edited ? ["edited"] : [])].map(cell).join(" | ")}`);
+    for (const [id, e] of rows) lines.push(`- ${[id, ...LIB_COLS.map((k) => e.tags[k]), e.folderName, e.tags.language || "", ...(e.edited ? ["edited"] : [])].map(cell).join(" | ")}`);
     lines.push("");
     return lines.join("\n");
   }
@@ -963,6 +1112,7 @@
       const edited = p.length >= 10 && p[p.length - 1] === "edited";
       if (edited) p.pop();
       const tags = { hasArt: null };   // 표지는 파일에 없음 → 재생할 때 알게 됨
+      if (p.length >= 10 && (LANGS.includes(p[p.length - 1]) || p[p.length - 1] === "")) tags.language = p.pop();
       LIB_COLS.forEach((k, i) => { tags[k] = p[i] || ""; });
       out.set(m[1], edited ? { tags, folderName: p.slice(8).join("|"), edited: true } : { tags, folderName: p.slice(8).join("|") });
     }
@@ -1203,7 +1353,7 @@
 
   function fallbackTags(t) {
     return { title: stripExt(t.name), artist: "", album: t.folderName || "", albumArtist: "", composer: "",
-      genre: "", track: "", year: "", hasArt: false };
+      genre: "", track: "", year: "", language: detectLang(stripExt(t.name)), hasArt: false };
   }
 
   // 파일의 [start, end] 바이트만 받기. start < 0 이면 끝에서부터
@@ -1334,6 +1484,11 @@
 
   // jsmediatags 결과 → 우리 모양 { title, artist, album, albumArtist, composer, genre, track, year, hasArt }
   function pickTags(t, result, flacBytes) {
+    const out = pickTags0(t, result, flacBytes);
+    out.language = detectLang(out.title, out.artist);
+    return out;
+  }
+  function pickTags0(t, result, flacBytes) {
     const T = (result && result.tags) || {};
     const fb = fallbackTags(t);
     const vc = flacBytes ? flacComments(flacBytes) : {};
@@ -1651,7 +1806,14 @@
   el.btnGroupPlay.onclick = () => { const g = currentGroup(); if (g) playGroup(g); };
 
   // 플레이리스트
-  el.btnBack.onclick = closePlaylist;
+  el.btnBack.onclick = () => { if (el.sTags.classList.contains("show")) closeTagEditor(); else closePlaylist(); };
+  el.tagKinds.onclick = (e) => {
+    const b = e.target.closest("button[data-kind]"); if (!b) return;
+    state.tagEdKind = b.dataset.kind; store.set("tagedkind", state.tagEdKind);
+    el.tagsQ.value = ""; mainEl.scrollTop = 0;
+    renderTagEditor();
+  };
+  el.tagsQ.addEventListener("input", renderTagEditor);
   el.tabLib.onclick = () => showTab("lib");
   el.tabPl.onclick = () => showTab("pl");
   el.btnPlNew.onclick = () => { if (createPlaylist(el.plNewName.value)) { el.plNewName.value = ""; renderPlaylistList(); } };

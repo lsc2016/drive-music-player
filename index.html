@@ -242,7 +242,8 @@
     #msheet label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
     #msheet .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     #msheet input { padding: 10px 12px; border-radius: 10px; border: 1px solid #2d323c; background: var(--panel-2); color: var(--text); outline: none; font-size: 16px; width: 100%; box-sizing: border-box; }
-    #msheet input:focus { border-color: var(--accent); }
+    #msheet input:focus, #msheet select:focus { border-color: var(--accent); }
+    #msheet select { padding: 10px 12px; border-radius: 10px; border: 1px solid #2d323c; background: var(--panel-2); color: var(--text); outline: none; font-size: 16px; width: 100%; }
     #msheet .btns { display: flex; gap: 8px; margin-top: 12px; flex: none; }
     #msheet .btns button { flex: 1; padding: 12px; border-radius: 12px; background: var(--panel-2); font-weight: 700; }
     #msheet .btns button.ok { background: var(--accent); color: #06130a; }
@@ -257,6 +258,12 @@
     .gediting .row.on .gchk { background: var(--accent); border-color: var(--accent); }
     .gediting .row.on .gchk svg { display: block; }
     .row.dropping { outline: 2px dashed var(--accent); outline-offset: -2px; }
+    /* 태그 목록 편집 */
+    .taghelp { color: var(--muted); font-size: 12.5px; margin: -4px 0 12px; line-height: 1.5; }
+    .row .grip { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: var(--muted); flex: none; touch-action: none; cursor: grab; }
+    .row .grip svg { width: 18px; height: 18px; fill: currentColor; }
+    .row.lifted { opacity: .35; }
+    .dragghost { position: fixed; z-index: 40; pointer-events: none; opacity: .92; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
     .mergebar {
       position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + var(--safe-b)); z-index: 15;
       padding: 12px 22px; border-radius: 999px; background: var(--accent); color: #06130a; font-weight: 700; box-shadow: 0 6px 20px rgba(0,0,0,.4);
@@ -326,6 +333,7 @@
         <button data-kind="album">앨범</button>
         <button data-kind="composer">작곡가</button>
         <button data-kind="genre">장르</button>
+        <button data-kind="language">언어</button>
       </div>
       <div class="searchrow">
         <input id="lib-q" type="search" placeholder="곡 찾기 (제목·가수·앨범·폴더)" autocomplete="off" enterkeyhint="search" />
@@ -370,6 +378,21 @@
   </section>
 
   <!-- 4) 플레이리스트 상세 -->
+  <!-- 5) 태그 목록 편집: 태그 종류를 고르면 값들 → 이름 바꾸기·끌어 포개 합치기 -->
+  <section class="screen" id="s-tags">
+    <div class="sectionhead"><h2>태그 목록 편집</h2><span class="count" id="tags-count"></span></div>
+    <div class="kinds" id="tag-kinds">
+      <button data-kind="artist" class="on">아티스트</button>
+      <button data-kind="album">앨범</button>
+      <button data-kind="composer">작곡가</button>
+      <button data-kind="genre">장르</button>
+      <button data-kind="language">언어</button>
+    </div>
+    <div class="searchrow"><input id="tags-q" type="search" placeholder="찾기" autocomplete="off" /></div>
+    <p class="taghelp">오른쪽 <b>≡</b> 를 잡고 다른 값 위에 놓으면 합쳐요. <b>✎</b> 는 이름 바꾸기. 음악 파일은 안 바뀌고 보관함에만 저장돼요.</p>
+    <div class="list" id="tag-list"></div>
+  </section>
+
   <section class="screen" id="s-pl">
     <div class="sectionhead">
       <h2 id="pl-title">플레이리스트</h2>
