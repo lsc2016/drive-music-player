@@ -34,7 +34,7 @@
     sheetNewName: $("sheet-new-name"), btnSheetNew: $("btn-sheet-new"), toast: $("toast"),
     btnFav: $("btn-fav"), icFavOff: $("ic-fav-off"), icFavOn: $("ic-fav-on"),
     btnLogin: $("btn-login"), loginNotice: $("login-notice"),
-    folderQ: $("folder-q"), btnFolderSearch: $("btn-folder-search"),
+    folderQ: $("folder-q"), btnFolderSearch: $("btn-folder-search"), folderHint: $("folder-hint"),
     folderList: $("folder-list"), folderEmpty: $("folder-empty"),
     tracksTitle: $("tracks-title"), tracksCount: $("tracks-count"), tagProgress: $("tag-progress"),
     trackList: $("track-list"), tracksEmpty: $("tracks-empty"),
@@ -65,6 +65,7 @@
     libDirty: false, libSaving: false, libAgain: false, libSaveTimer: null,
     groupEditing: false, groupChecked: new Set(),   // 이름 목록 "편집"(합치기) 중 / 체크한 묶음 key
     scanId: 0,            // 태그 읽기 차례 번호 — 폴더를 바꾸면 이전 읽기는 멈춤
+    openSeq: 0,           // 폴더 열기 차례 번호 — 그새 다른 폴더를 열면 늦게 온 결과는 버림
     arts: new Map(),      // 파일ID -> 표지 그림 objectURL (메모리에만)
     tracks: [],           // 지금 "재생 중인 출처"의 곡들 (전체 곡 또는 플레이리스트 하나)
     source: { type: "library" },   // { type:"library" } | { type:"playlist", name } | { type:"group", kind, key, name }
@@ -213,6 +214,9 @@
     stopPlayback();
     state.playlists = []; state.plFileId = null; state.library = [];
     state.scanId++; state.tagDb = new Map(); state.libFileId = null; tagDbLoading = null; store.del("library"); store.del("libundo");
+    for (const k of store.get("libkeys", [])) store.del("lib:" + k);
+    store.del("libkeys");
+    store.del("folder"); state.folder = null;   // 다음 로그인은 기본 폴더(Music) 찾기부터
     show(el.sLogin);
     notice("로그아웃했어요.", true);
   }
@@ -220,15 +224,21 @@
   async function afterLogin() {
     loadPlaylists().catch((e) => { el.plSync.textContent = "불러오기 실패"; console.warn(e); });
     const saved = store.get("folder", null);
-    if (saved && saved.id) {
-      await openFolder(saved);
-    } else if (CFG.DEFAULT_FOLDER_NAME) {
-      const list = await listFolders(CFG.DEFAULT_FOLDER_NAME);
-      const hit = list.find((f) => f.name === CFG.DEFAULT_FOLDER_NAME) || list[0];
-      if (hit) await openFolder(hit); else await showFolderPicker();
-    } else {
-      await showFolderPicker();
+    if (saved && saved.id) await openFolder(saved);
+    else await openDefaultFolder();
+  }
+
+  // 기본 폴더(config.js의 DEFAULT_FOLDER_NAME, 보통 "Music")를 딱 한 번 찾아서 열기. 없으면 그때만 폴더 고르기 화면
+  async function openDefaultFolder() {
+    const name = (CFG.DEFAULT_FOLDER_NAME || "").trim();
+    if (name) {
+      try {
+        const hit = await findFolderByName(name);
+        if (hit) return openFolder({ id: hit.id, name: hit.name }, { fromDefault: true });
+      } catch (e) { console.warn("기본 폴더 찾기 실패", e); }
+      return showFolderPicker(`"${name}" 폴더를 못 찾았어요. 음악 폴더 이름을 입력해 찾아보세요.`);
     }
+    return showFolderPicker();
   }
 
   // ── 드라이브 API ───────────────────────────────────────────
@@ -245,7 +255,8 @@
     if (!res.ok) {
       let msg = res.status + " " + res.statusText;
       try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch {}
-      throw new Error(msg);
+      const err = new Error(msg); err.status = res.status;
+      throw err;
     }
     return res;
   }
@@ -267,10 +278,40 @@
 
   const esc = (s) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 
+  // 한 페이지만 가져오기 (폴더 찾기용 — 폴더가 아무리 많아도 한 번만 물어봄)
+  async function listPage(q, fields, orderBy, pageSize) {
+    const res = await driveFetch("/files", {
+      q, fields: `files(${fields})`, pageSize: String(pageSize), orderBy,
+      supportsAllDrives: "true", includeItemsFromAllDrives: "true",
+    });
+    return (await res.json()).files || [];
+  }
+  const FOLDER_Q = "mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+
+  // 이름으로 찾으면 50개까지(이름 순), 빈 칸이면 최근 수정된 폴더 20개만
   async function listFolders(query) {
-    let q = "mimeType = 'application/vnd.google-apps.folder' and trashed = false";
-    if (query) q += ` and name contains '${esc(query)}'`;
-    return listAll(q, "id, name, modifiedTime, parents", query ? "name" : "modifiedTime desc");
+    if (!query) return listPage(FOLDER_Q, "id, name, modifiedTime, parents", "modifiedTime desc", 20);
+    return listPage(`${FOLDER_Q} and name contains '${esc(query)}'`, "id, name, modifiedTime, parents", "name", 50);
+  }
+  // 이름이 딱 그것(대소문자 무시)인 폴더 — 여러 개면 가장 최근 수정된 것
+  //  드라이브의 name = 비교는 대소문자를 가릴 수 있어서 Music·music·MUSIC 같은 흔한 표기를 한 번에 물어봄
+  async function findFolderByName(name) {
+    const spellings = [...new Set([name, name.toLowerCase(), name.toUpperCase(), name.charAt(0).toUpperCase() + name.slice(1).toLowerCase()])];
+    const nameQ = spellings.map((n) => `name = '${esc(n)}'`).join(" or ");
+    const list = await listPage(`${FOLDER_Q} and (${nameQ})`, "id, name, modifiedTime", "modifiedTime desc", 5);
+    return list.find((f) => f.name.toLowerCase() === name.toLowerCase()) || null;
+  }
+  // 기억된 폴더가 아직 있는지 (지워졌거나 휴지통·권한 없음이면 gone)
+  async function checkFolder(folder) {
+    try {
+      const res = await driveFetch(`/files/${folder.id}`, { fields: "id, name, trashed", supportsAllDrives: "true" });
+      const f = await res.json();
+      if (f.trashed) { const e = new Error("휴지통에 있는 폴더"); e.gone = true; throw e; }
+      return f;
+    } catch (e) {
+      if (e.status === 404 || e.status === 403) e.gone = true;
+      throw e;
+    }
   }
 
   async function listAudioIn(folder) {
@@ -299,19 +340,26 @@
   }
 
   // ── 폴더 고르기 화면 ────────────────────────────────────────
-  async function showFolderPicker() {
+  function showFolderPicker(msg = "") {
     show(el.sFolder);
     el.hdrSub.textContent = "";
-    await searchFolders();
+    el.folderList.innerHTML = "";
+    el.folderEmpty.classList.add("hidden");
+    el.folderHint.textContent = (typeof msg === "string" && msg) || "폴더 이름을 입력하세요. 비우고 찾으면 최근 폴더 20개";
     el.folderQ.focus();
   }
 
+  let folderSeq = 0;   // 찾기를 연달아 누르면 마지막 것만 보여줌
   async function searchFolders() {
+    const my = ++folderSeq;
     el.folderList.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
     el.folderEmpty.classList.add("hidden");
     try {
-      const folders = await listFolders(el.folderQ.value.trim());
+      const query = el.folderQ.value.trim();
+      const folders = await listFolders(query);
+      if (my !== folderSeq) return;
       el.folderList.innerHTML = "";
+      el.folderHint.textContent = query ? `"${query}" 들어간 폴더${folders.length >= 50 ? " (앞의 50개만)" : ""}` : "최근 수정된 폴더 20개";
       if (!folders.length) { el.folderEmpty.classList.remove("hidden"); return; }
       for (const f of folders.slice(0, 100)) {
         const b = document.createElement("button");
@@ -324,12 +372,13 @@
         el.folderList.appendChild(b);
       }
     } catch (e) {
+      if (my !== folderSeq) return;
       el.folderList.innerHTML = `<div class="notice">폴더를 못 불러왔어요: ${e.message}</div>`;
     }
   }
 
   // ── 재생목록 화면 ──────────────────────────────────────────
-  async function openFolder(folder, { retag = false, dropEdits = false } = {}) {
+  async function openFolder(folder, { retag = false, dropEdits = false, fromDefault = false } = {}) {
     state.scanId++;   // 읽던 태그는 멈춤
     setTagProgress("");
     if (!state.folder || state.folder.id !== folder.id) el.libQ.value = "";   // 다른 폴더로 가면 검색어 비움 (새로고침은 유지)
@@ -344,13 +393,61 @@
     el.tracksEmpty.classList.add("hidden");
     el.searchEmpty.classList.add("hidden");
     showTab("lib");
+    const my = ++state.openSeq;
+    const tagP = loadTagDb();   // 이 기기에 남은 태그 복사본은 여기서 바로 들어옴
+    const cached = readLibCache(folder.id);
+    if (cached) setLibrary(cached);   // 지난번 목록으로 먼저 보여줌
     try {
-      const [tracks] = await Promise.all([listAudioIn(folder), loadTagDb()]);
-      setLibrary(tracks);
+      const [tracks] = await Promise.all([listAudioIn(folder), tagP, checkFolder(folder)]);
+      if (my !== state.openSeq) return;   // 그새 다른 폴더를 열었음
+      writeLibCache(folder.id, tracks);
+      if (!cached) setLibrary(tracks);
+      else if (libChanged(cached, tracks)) refreshLibrary(tracks);
+      else { attachTags(); renderLib(); }   // 목록은 같고 드라이브의 태그만 새로 왔을 수 있음
       scanTags(retag, dropEdits);
     } catch (e) {
-      el.trackList.innerHTML = `<div class="notice">목록을 못 불러왔어요: ${e.message}</div>`;
+      if (my !== state.openSeq) return;
+      if (e.gone) {   // 기억된 폴더가 지워졌거나 권한이 없음 → 기억을 지우고 기본 폴더부터 다시
+        store.del("folder"); store.del("lib:" + folder.id); state.folder = null;
+        toast(`"${folder.name}" 폴더를 열 수 없어서 다시 찾아요`);
+        if (!retag && !fromDefault) return openDefaultFolder();   // 기본 폴더에서 온 거면 또 찾지 않음(반복 방지)
+        return showFolderPicker(`"${folder.name}" 폴더를 열 수 없어요. 다른 폴더를 찾아보세요.`);
+      }
+      if (cached) toast("목록을 새로 못 읽었어요 — 지난번 목록을 보여줘요");
+      else el.trackList.innerHTML = `<div class="notice">목록을 못 불러왔어요: ${e.message}</div>`;
     }
+  }
+
+  // 곡 목록 캐시: localStorage "dm:lib:<폴더ID>". 파일 정보만(태그는 보관함 tagDb에 따로 있어서 겹치지 않음). 최근 5개 폴더만
+  const LIB_CACHE_MAX = 5;
+  function readLibCache(folderId) {
+    const c = store.get("lib:" + folderId, null);
+    if (!Array.isArray(c) || !c.length) return null;
+    return c.map(([id, name, size, mimeType, folderName]) => ({ id, name, title: stripExt(name), size, mimeType, folderName }));
+  }
+  function writeLibCache(folderId, tracks) {
+    store.set("lib:" + folderId, tracks.map((t) => [t.id, t.name, t.size, t.mimeType, t.folderName]));
+    const keys = store.get("libkeys", []).filter((k) => k !== folderId);
+    keys.unshift(folderId);
+    for (const old of keys.splice(LIB_CACHE_MAX)) store.del("lib:" + old);
+    store.set("libkeys", keys);
+  }
+  const libSig = (tracks) => tracks.map((t) => `${t.id}\u0001${t.name}\u0001${t.size}\u0001${t.folderName}`).join("\n");
+  const libChanged = (a, b) => libSig(a) !== libSig(b);
+  // 듣던 곡·받아둔 파일은 그대로 두고 목록만 바꿈 (캐시로 먼저 그린 뒤 드라이브 목록이 달랐을 때)
+  function refreshLibrary(tracks) {
+    const keep = new Set(tracks.map((t) => t.id));
+    for (const [id, u] of state.blobUrls) if (!keep.has(id)) { URL.revokeObjectURL(u); state.blobUrls.delete(id); }
+    const cur = currentTrack();
+    state.library = tracks;
+    attachTags();
+    if (state.source.type === "library") {
+      state.tracks = tracks; state.pos = -1;
+      rebuildOrder();
+      if (cur) { const i = tracks.findIndex((t) => t.id === cur.id); if (i >= 0) state.pos = state.order.indexOf(i); }
+    }
+    el.tracksEmpty.classList.toggle("hidden", tracks.length > 0);
+    renderLib();
   }
 
   function setLibrary(tracks) {
@@ -1772,7 +1869,7 @@
   // ── 버튼 ──────────────────────────────────────────────────
   el.btnLogin.onclick = login;
   el.btnLogout.onclick = logout;
-  el.btnFolder.onclick = showFolderPicker;
+  el.btnFolder.onclick = () => showFolderPicker();
   let refreshTimer = null, refreshLong = false;
   el.btnRefresh.addEventListener("pointerdown", () => {
     refreshLong = false; clearTimeout(refreshTimer);

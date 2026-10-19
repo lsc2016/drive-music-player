@@ -5,15 +5,18 @@
 ## 구조 (파일 3개가 전부, 빌드 도구 없음)
 - `index.html` — 화면과 스타일(CSS는 이 파일 안에 있음). 화면 3개: 로그인 `#s-login`, 폴더 고르기 `#s-folder`, 재생목록 `#s-tracks`. 하단 고정 플레이어 `#player`.
 - `app.js` — 모든 동작. 즉시실행함수 하나 안에 섹션별로 나뉘어 있음: 로그인(토큰) → 드라이브 API → 폴더 화면 → 재생목록 화면 → 재생 순서 → 파일 받기 → 재생 제어 → Media Session → 이벤트 → 시작.
-- `config.js` — 사용자가 손대는 설정 (`CLIENT_ID`, `DEFAULT_FOLDER_NAME`, `INCLUDE_SUBFOLDERS`). 코드에서는 `window.APP_CONFIG`로 읽음.
+- `config.js` — 사용자가 손대는 설정 (`CLIENT_ID`, `DEFAULT_FOLDER_NAME` 기본 "Music", `INCLUDE_SUBFOLDERS`). 코드에서는 `window.APP_CONFIG`로 읽음.
 - `icons/`(icon-32·180·192·512.png, 초록 정사각형 + 흰 음표) + `manifest.json` — "홈 화면에 추가"용 앱 아이콘·이름. `index.html` `<head>`에서 연결, 경로는 GitHub Pages 하위 경로 때문에 전부 상대경로. 아이콘을 바꾸면 PNG 네 개를 같이 다시 만들기(`sips`로 SVG→PNG).
 - `serve.sh` — 로컬 실행 (`python3 -m http.server 8000`). `README.md` — 사용자용 설치·사용 안내(구글 클라이언트 ID 발급 순서 포함).
 
 ## 동작 방식 (바꿀 때 알아둘 것)
 - 로그인: Google Identity Services 토큰 클라이언트(`initTokenClient`), scope `drive.readonly`. 토큰은 1시간짜리라 `sessionStorage`에 두고, 만료·401이면 `prompt:""`로 조용히 재발급. 리디렉션 URI 없음 → 구글 콘솔에는 "승인된 JavaScript 원본"만 등록.
+- 첫 화면: `afterLogin()` → 기억된 폴더(`dm:folder`)가 있으면 `openFolder(saved)`, 없으면 `openDefaultFolder()` = `findFolderByName(CFG.DEFAULT_FOLDER_NAME)`(기본 "Music") 한 번만(q `name = 'Music' or name = 'music' or name = 'MUSIC'` — 드라이브의 `=`가 대소문자를 가려서 흔한 표기를 한 요청에 다 물음, pageSize 5, 최근 수정 순, 받은 뒤 대소문자 무시로 다시 확인) → 있으면 `openFolder(hit, {fromDefault:true})`, 없을 때만 `showFolderPicker(msg)`. 폴더 고르기 화면은 열 때 아무것도 검색 안 함(`#folder-hint` 안내만). 찾기/Enter 때만 `searchFolders()` → `listFolders(query)`: 빈 칸이면 최근 수정 20개, 이름이면 `name contains` 50개 — 둘 다 `listPage()`(첫 페이지만). 끝까지 페이지 넘기는 `listAll()`은 음악 목록(`listAudioIn`)에만. 찾기를 연달아 누르면 `folderSeq`로 마지막 결과만.
+- 지워진 폴더: `openFolder`가 음악 목록과 함께 `checkFolder(folder)`(GET /files/id, 404·403·휴지통이면 `e.gone`; `driveFetch` 오류엔 `err.status`가 붙음)를 부름 → gone이면 `dm:folder`·캐시 지우고 `openDefaultFolder()`부터 다시(기본 폴더에서 온 거면 반복 막으려 폴더 고르기로).
+- 곡 목록 캐시: localStorage `dm:lib:<폴더ID>` = `[id, name, size, mimeType, folderName]` 배열(태그는 안 넣음 — 태그는 `dm:library`/library.md 쪽이라 겹치지 않음), 최근 5개 폴더만(`dm:libkeys`). `openFolder`가 캐시 있으면 `setLibrary(cached)`로 먼저 그리고(이때 `loadTagDb()`의 이 기기 복사본도 이미 들어와 있음), 드라이브 목록이 오면 `libChanged()`면 `refreshLibrary()`(듣던 곡·받아둔 파일 유지, 목록만 교체), 같으면 `attachTags()`+`renderLib()`. 그새 다른 폴더를 열면 `state.openSeq`로 늦은 결과 버림. 로그아웃하면 캐시와 기억된 폴더(`dm:folder`)를 지움 → 다음 로그인은 기본 폴더 찾기부터.
 - 파일 목록: Drive v3 `files.list`, 폴더를 BFS로 돌며 `mimeType contains 'audio/'` 또는 확장자(`AUDIO_EXT`)로 거름. 폴더명→파일명 순 정렬(`Intl.Collator ko, numeric`).
 - 재생: `<audio>`는 헤더를 못 붙이므로 `alt=media`로 fetch → Blob → `URL.createObjectURL`. 받아둔 파일은 `state.blobUrls`에 최근 6곡까지, 다음 곡은 `prefetchNext()`로 미리 받음. (스트리밍이 아니라 통째로 받은 뒤 재생.)
-- 기억: `localStorage` 키 `dm:folder`, `dm:last:<folderId>`, `dm:shuffle`, `dm:repeat`.
+- 기억: `localStorage` 키 `dm:folder`, `dm:last:<folderId>`, `dm:shuffle`, `dm:repeat`, `dm:lib:<folderId>`(곡 목록 캐시).
 - 섞기는 `state.order`(인덱스 배열)만 섞고 `state.tracks`는 그대로 둠. 현재 곡 위치는 `state.pos`(order 기준).
 - 곡 출처 두 가지: `state.library`(폴더 전체 곡)와 `state.playlists`. 실제 재생 큐는 `state.tracks` + `state.source`(`{type:"library"}` 또는 `{type:"playlist", name}`)이고, `setQueue()`로 바꿈. 폴더 새로고침은 라이브러리만 갈고 플레이리스트 재생 중이면 큐를 건드리지 않음.
 - 플레이리스트 저장: 드라이브 루트의 `drive-music-playlists.md`(상수 `PL_FILE`). `serializePlaylists`/`parsePlaylists`가 `## 이름` + `- 제목 | 파일ID | 폴더` 형식을 읽고 씀. 바꾸면 `savePlaylists()` → localStorage 즉시 + 1.2초 뒤 `flushPlaylists()`로 드라이브 업로드(처음엔 multipart 생성, 이후 PATCH media). 이 때문에 scope에 `drive.file` 추가됨. `즐겨찾기`(상수 `FAV`)는 ♥ 버튼용 기본 플레이리스트.

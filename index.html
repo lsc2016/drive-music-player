@@ -309,11 +309,12 @@
   <section class="screen" id="s-folder">
     <div class="sectionhead"><h2>음악 폴더 고르기</h2></div>
     <div class="searchrow">
-      <input id="folder-q" placeholder="폴더 이름으로 찾기 (비우면 최근 폴더)" autocomplete="off" />
+      <input id="folder-q" placeholder="폴더 이름 (예: Music)" autocomplete="off" />
       <button class="iconbtn" id="btn-folder-search" title="찾기">
         <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
       </button>
     </div>
+    <p class="taghelp" id="folder-hint">폴더 이름을 입력하세요. 비우고 찾으면 최근 폴더 20개</p>
     <div class="list" id="folder-list"></div>
     <div class="empty hidden" id="folder-empty">폴더가 없어요. 이름을 바꿔서 다시 찾아보세요.</div>
   </section>

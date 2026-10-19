@@ -7,8 +7,10 @@
 window.APP_CONFIG = {
   CLIENT_ID: "656080072686-v85232qevre1rnecpmtju7cdt1gii1f8.apps.googleusercontent.com",
 
-  // 드라이브에서 기본으로 열 폴더 이름 (비워두면 로그인 후 직접 고릅니다)
-  DEFAULT_FOLDER_NAME: "",
+  // 드라이브에서 기본으로 열 폴더 이름. 기본값 "Music" — 로그인 후 기억된 폴더가 없으면
+  // 이름이 딱 "Music"(대소문자 무시)인 폴더를 한 번만 찾아서 바로 엽니다. 여러 개면 가장 최근 수정된 것.
+  // 없으면 그때만 폴더 고르기 화면이 나와요. 비워두면("") 항상 폴더 고르기 화면부터.
+  DEFAULT_FOLDER_NAME: "Music",
 
   // 하위 폴더까지 뒤져서 음악을 모을지 (앨범별 폴더가 있으면 true 추천)
   INCLUDE_SUBFOLDERS: true,
