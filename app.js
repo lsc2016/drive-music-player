@@ -85,6 +85,7 @@
     blobUrls: new Map(),  // trackId -> objectURL (받아둔 파일)
     loadingId: null,
     seeking: false,
+    queueOpen: false,     // 다음 곡 시트가 열려 있음 (곡이 바뀌면 다시 그림)
   };
 
   const store = {
@@ -886,6 +887,7 @@
   // 만능 바텀시트: 제목·설명·내용, ok가 있으면 아래에 취소/확인. ok.fn이 false를 돌려주면 안 닫음
   let msheetOk = null;
   function openMSheet({ title, sub = "", body, ok = null }) {
+    state.queueOpen = false;
     el.msheetTitle.textContent = title;
     el.msheetSub.textContent = sub;
     el.msheetSub.classList.toggle("hidden", !sub);
@@ -896,7 +898,7 @@
     if (ok) el.msheetOk.textContent = ok.label;
     el.dim.classList.add("show"); el.msheet.classList.add("show");
   }
-  function closeMSheet() { el.msheet.classList.remove("show"); if (!el.sheet.classList.contains("show")) el.dim.classList.remove("show"); msheetOk = null; }
+  function closeMSheet() { state.queueOpen = false; el.msheet.classList.remove("show"); if (!el.sheet.classList.contains("show")) el.dim.classList.remove("show"); msheetOk = null; }
   el.msheetOk.onclick = () => { if (msheetOk && msheetOk.fn() !== false) closeMSheet(); };
   const elt = (html) => { const d = document.createElement("div"); d.innerHTML = html; return d.firstElementChild; };
   // 바텀시트 안 메뉴 한 줄
@@ -1847,11 +1849,65 @@
     const artist = (t.tags && t.tags.artist) || "";
     el.npTitle.textContent = dispTitle(t);
     const src = state.source;
-    const from = src.type === "playlist" ? src.name
+    el.npSub.textContent = [src.type === "group" && src.kind === "artist" ? "" : artist, `♪ ${sourceName()}`].filter(Boolean).join(" · ");
+    document.title = dispTitle(t) + " · Drive Music";
+    renderQueueSheet();
+  }
+  // 지금 큐가 어디서 왔는지: 전체 곡 / 아티스트: 10cm / 검색: 사랑 / 플레이리스트 이름
+  function sourceName() {
+    const src = state.source;
+    return src.type === "playlist" ? src.name
       : src.type === "group" ? `${(KINDS[src.kind] || {}).label || ""}: ${src.name}`
       : src.type === "view" ? src.name : "전체 곡";
-    el.npSub.textContent = [src.type === "group" && src.kind === "artist" ? "" : artist, `♪ ${from}`].filter(Boolean).join(" · ");
-    document.title = dispTitle(t) + " · Drive Music";
+  }
+
+  // 다음 곡 시트: 하단 플레이어 곡 이름·표지를 누르면. 실제 재생 순서(state.order)대로, 지금 곡 다음부터
+  const QUEUE_MAX = 100;   // 한 번에 그리는 다음 곡 수 (폴더 전체가 큐일 수 있어서)
+  function openQueueSheet() {
+    if (!currentTrack() || !state.order.length) return;
+    const { sub, body } = queueSheetContent();
+    openMSheet({ title: "다음 곡", sub, body });
+    state.queueOpen = true;
+  }
+  // 열려 있을 때만 새 위치에 맞게 다시 그림 (곡이 넘어가거나 섞기·반복을 바꿨을 때)
+  function renderQueueSheet() {
+    if (!state.queueOpen) return;
+    if (!currentTrack()) { closeMSheet(); return; }
+    const { sub, body } = queueSheetContent();
+    el.msheetSub.textContent = sub;
+    el.msheetSub.classList.toggle("hidden", !sub);
+    el.msheetBody.innerHTML = "";
+    el.msheetBody.appendChild(body);
+  }
+  function queueSheetContent() {
+    const cur = currentTrack();
+    const len = state.order.length;
+    // 앞으로 나올 order 위치들: 지금 곡 다음 ~ 끝, 전체 반복이면 처음 ~ 지금 곡 앞까지 이어서
+    const ahead = [];
+    for (let p = state.pos + 1; p < len; p++) ahead.push(p);
+    const wrapAt = ahead.length;   // 여기부터 "처음부터 다시"
+    if (state.repeat === "all") for (let p = 0; p < state.pos; p++) ahead.push(p);
+
+    const sub = [`♪ ${sourceName()}`, `남은 ${ahead.length}곡`, state.repeat === "one" ? "한 곡 반복 중" : ""].filter(Boolean).join(" · ");
+    const body = document.createDocumentFragment();
+    const note = (text) => { const d = document.createElement("div"); d.className = "qnote"; d.textContent = text; return d; };
+
+    const curRow = trackRow(cur, 0, { playing: true, sub: tagSub(cur) || cur.folderName || "", onPlay: closeMSheet });
+    curRow.querySelector(".num").textContent = "▶";
+    body.appendChild(curRow);
+    if (!ahead.length) { body.appendChild(note("마지막 곡이에요")); return { sub, body }; }
+
+    ahead.slice(0, QUEUE_MAX).forEach((p, i) => {
+      if (i === wrapAt) body.appendChild(note("처음부터 다시"));
+      const t = state.tracks[state.order[p]];
+      if (!t) return;
+      body.appendChild(trackRow(t, i, {
+        sub: tagSub(t) || t.folderName || "",
+        onPlay: () => { closeMSheet(); state.pos = p; playCurrent(); },   // 큐는 그대로, 그 자리로 건너뜀
+      }));
+    });
+    if (ahead.length > QUEUE_MAX) body.appendChild(note(`외 ${ahead.length - QUEUE_MAX}곡`));
+    return { sub, body };
   }
   // 하단 플레이어 초록 네모: 표지가 있으면 표지, 없으면 음표
   function showArt(url) {
@@ -1894,6 +1950,7 @@
     el.btnShuffle.classList.toggle("active", state.shuffle);
     rebuildOrder();   // 끄면 원래 순서로 (지금 곡은 그대로)
     saveQueue();
+    renderQueueSheet();
   }
   // 섞기 켜기/끄기를 정하고 하단 섞기 아이콘도 맞춤 (큐는 부르는 쪽에서 새로 만듦)
   function setShuffle(on) {
@@ -1905,6 +1962,7 @@
     state.repeat = state.repeat === "off" ? "all" : state.repeat === "all" ? "one" : "off";
     store.set("repeat", state.repeat);
     applyRepeatUI();
+    renderQueueSheet();
   }
   function applyRepeatUI() {
     el.btnRepeat.classList.toggle("active", state.repeat !== "off");
@@ -1999,7 +2057,10 @@
   el.btnPrev.onclick = prev;
   el.btnShuffle.onclick = toggleShuffle;
   el.btnRepeat.onclick = cycleRepeat;
-  el.btnFav.onclick = toggleFav;
+  el.btnFav.onclick = toggleFav;   // ♥는 .meta 밖이라 눌러도 다음 곡 시트가 안 열림
+  // 곡 이름·표지 → 다음 곡 목록
+  el.player.querySelector(".np .meta").addEventListener("click", openQueueSheet);
+  el.npArt.addEventListener("click", openQueueSheet);
 
   // 보관함 분류
   el.libKinds.onclick = (e) => {
