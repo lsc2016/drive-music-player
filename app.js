@@ -22,7 +22,7 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     hdrSub: $("hdr-sub"),
-    btnBack: $("btn-back"), btnFolder: $("btn-folder"), btnRefresh: $("btn-refresh"), btnLogout: $("btn-logout"),
+    btnHome: $("btn-home"), btnBack: $("btn-back"), btnFolder: $("btn-folder"), btnRefresh: $("btn-refresh"), btnLogout: $("btn-logout"),
     sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"), sTags: $("s-tags"),
     tagKinds: $("tag-kinds"), tagsQ: $("tags-q"), tagList: $("tag-list"), tagsCount: $("tags-count"),
     viewLib: $("view-lib"), viewPl: $("view-pl"),
@@ -61,6 +61,7 @@
     tokenClient: null,
     folder: null,         // { id, name }
     library: [],          // 폴더에서 긁어온 전체 곡 [{ id, name, title, size, mimeType, folderName, tags }]
+    libFor: null,         // library가 어느 폴더(ID) 것인지
     tagDb: new Map(),     // 파일ID -> { tags, folderName } (drive-music-library.md 내용, 모든 폴더)
     libFileId: null,      // 드라이브에 있는 보관함 파일 id
     libDirty: false, libSaving: false, libAgain: false, libSaveTimer: null,
@@ -213,7 +214,7 @@
     state.token = null;
     sessionStorage.removeItem("dm:token");
     stopPlayback();
-    state.playlists = []; state.plFileId = null; state.library = [];
+    state.playlists = []; state.plFileId = null; state.library = []; state.libFor = null;
     state.scanId++; state.tagDb = new Map(); state.libFileId = null; tagDbLoading = null; store.del("library"); store.del("libundo");
     for (const k of store.get("libkeys", [])) store.del("lib:" + k);
     store.del("libkeys");
@@ -458,6 +459,7 @@
     for (const u of state.blobUrls.values()) URL.revokeObjectURL(u);
     state.blobUrls.clear();
     state.library = tracks;
+    state.libFor = state.folder ? state.folder.id : null;   // 이 목록이 어느 폴더 것인지 (로고로 돌아갈 때 봄)
     attachTags();
     el.tracksCount.textContent = tracks.length ? `${tracks.length}곡` : "";
     el.tracksEmpty.classList.toggle("hidden", tracks.length > 0);
@@ -1961,6 +1963,22 @@
   el.btnLogin.onclick = login;
   el.btnLogout.onclick = logout;
   el.btnFolder.onclick = () => showFolderPicker();
+  // 맨 위 로고 = 첫 화면(곡 목록). 드라이브에 다시 묻지 않고, 듣던 곡·큐·섞기는 그대로
+  function goHome() {
+    closeSheet(); closeMSheet();
+    if (el.sLogin.classList.contains("show") || !state.folder) return;   // 로그인 전이거나 돌아갈 폴더가 없음
+    if (el.sPl.classList.contains("show")) return closePlaylist();
+    if (el.sTags.classList.contains("show")) return closeTagEditor();
+    if (el.sTracks.classList.contains("show")) { mainEl.scrollTop = 0; return; }
+    // 폴더 고르기 화면 → 열던 폴더로
+    el.folderQ.blur();
+    if (state.libFor !== state.folder.id) return openFolder(state.folder);   // 받아둔 목록이 없음
+    show(el.sTracks);
+    el.hdrSub.textContent = state.folder.name;
+    showTab(store.get("tab", "lib") === "pl" ? "pl" : "lib");
+    renderLib();
+  }
+  el.btnHome.onclick = goHome;
   let refreshTimer = null, refreshLong = false;
   el.btnRefresh.addEventListener("pointerdown", () => {
     refreshLong = false; clearTimeout(refreshTimer);

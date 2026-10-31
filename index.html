@@ -46,8 +46,12 @@
       padding: calc(12px + var(--safe-t)) calc(16px + var(--safe-r)) 12px calc(16px + var(--safe-l)); border-bottom: 1px solid #262a33;
       position: sticky; top: 0; background: var(--bg); z-index: 5;   /* 시계 줄 밑으로 아이콘이 숨지 않게 그 높이만큼 내림 */
     }
-    header h1 { font-size: 17px; margin: 0; flex: 1; font-weight: 700; letter-spacing: .2px; }
-    header h1 small { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 13px; }
+    header h1 { font-size: 17px; margin: 0; flex: 1; min-width: 0; font-weight: 700; letter-spacing: .2px; display: flex; align-items: center; }
+    header h1 small { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* 로고 = 첫 화면 버튼. 눌리는 곳은 로고·글자까지만(오른쪽 빈 곳은 h1이라 안 눌림) */
+    #btn-home { display: flex; align-items: center; gap: 7px; flex: none; padding: 0; font-weight: inherit; letter-spacing: inherit; white-space: nowrap; }
+    #btn-home svg { width: 21px; height: 21px; flex: none; }
+    #btn-home:active { opacity: .55; }
     .iconbtn {
       width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
       background: var(--panel-2); color: var(--text);
@@ -285,7 +289,7 @@
   <button class="iconbtn hidden" id="btn-back" title="뒤로">
     <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
   </button>
-  <h1>Drive Music <small id="hdr-sub"></small></h1>
+  <h1><button id="btn-home" title="첫 화면"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" fill="#1db954"/><path d="M40 30v38a9 9 0 1 1-6-8.5V36l26-6v26a9 9 0 1 1-6-8.5V24l-14 3z" fill="#fff"/></svg>Drive Music</button><small id="hdr-sub"></small></h1>
   <button class="iconbtn hidden" id="btn-folder" title="폴더 바꾸기">
     <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
   </button>
