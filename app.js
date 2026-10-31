@@ -22,7 +22,7 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     hdrSub: $("hdr-sub"),
-    btnHome: $("btn-home"), btnBack: $("btn-back"), btnFolder: $("btn-folder"), btnRefresh: $("btn-refresh"), btnLogout: $("btn-logout"),
+    btnHome: $("btn-home"), btnBack: $("btn-back"), btnSettings: $("btn-settings"),
     sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"), sTags: $("s-tags"),
     tagKinds: $("tag-kinds"), tagsQ: $("tags-q"), tagList: $("tag-list"), tagsCount: $("tags-count"),
     viewLib: $("view-lib"), viewPl: $("view-pl"),
@@ -130,9 +130,7 @@
     const signedIn = screen !== el.sLogin;
     const sub = screen === el.sPl || screen === el.sTags;   // 뒤로 버튼이 있는 하위 화면
     el.btnBack.classList.toggle("hidden", !sub);
-    el.btnFolder.classList.toggle("hidden", !signedIn || sub);
-    el.btnRefresh.classList.toggle("hidden", screen !== el.sTracks);
-    el.btnLogout.classList.toggle("hidden", !signedIn || sub);
+    el.btnSettings.classList.toggle("hidden", !signedIn || sub);
     window.scrollTo(0, 0);
   };
   let toastTimer = null;
@@ -896,14 +894,15 @@
     el.msheetBtns.classList.toggle("hidden", !ok);
     msheetOk = ok;
     if (ok) el.msheetOk.textContent = ok.label;
+    el.msheetOk.classList.toggle("danger", !!(ok && ok.danger));   // 로그아웃 확인처럼 되돌릴 수 없는 것은 빨간 버튼
     el.dim.classList.add("show"); el.msheet.classList.add("show");
   }
   function closeMSheet() { state.queueOpen = false; el.msheet.classList.remove("show"); if (!el.sheet.classList.contains("show")) el.dim.classList.remove("show"); msheetOk = null; }
   el.msheetOk.onclick = () => { if (msheetOk && msheetOk.fn() !== false) closeMSheet(); };
   const elt = (html) => { const d = document.createElement("div"); d.innerHTML = html; return d.firstElementChild; };
   // 바텀시트 안 메뉴 한 줄
-  function menuRow(name, sub, fn, off = false) {
-    const b = elt(`<button class="row${off ? " off" : ""}"><div class="t"><div class="n"></div><div class="s"></div></div></button>`);
+  function menuRow(name, sub, fn, off = false, danger = false) {
+    const b = elt(`<button class="row${off ? " off" : ""}${danger ? " danger" : ""}"><div class="t"><div class="n"></div><div class="s"></div></div></button>`);
     b.querySelector(".n").textContent = name; b.querySelector(".s").textContent = sub || "";
     b.onclick = fn;
     return b;
@@ -1039,8 +1038,33 @@
     body.style.cssText = "display:flex;flex-direction:column;gap:6px";
     body.appendChild(menuRow("태그 목록 편집", "아티스트·앨범·작곡가·장르·언어 값 이름 바꾸기·합치기", () => { closeMSheet(); openTagEditor(); }));
     body.appendChild(menuRow("마지막 변경 되돌리기", u ? u.label : "되돌릴 변경이 없어요", () => { closeMSheet(); undoLast(); }, !u));
-    body.appendChild(menuRow("태그 전부 다시 읽기", "새로고침 아이콘 길게 누르기와 같아요", () => { closeMSheet(); retagAll(); }));
+    body.appendChild(menuRow("태그 전부 다시 읽기", "설정(⚙) 메뉴에도 있어요", () => { closeMSheet(); retagAll(); }));
     openMSheet({ title: "보관함", body });
+  }
+
+  // 상단 ⚙ 설정 메뉴: 폴더 바꾸기, 새로고침, 태그 전부 다시 읽기, 로그아웃(한 번 더 물어봄)
+  function openSettingsMenu() {
+    const onTracks = el.sTracks.classList.contains("show") && !!state.folder;   // 새로고침 두 줄은 곡 목록 화면에서만
+    const body = document.createElement("div");
+    body.style.cssText = "display:flex;flex-direction:column;gap:6px";
+    body.appendChild(menuRow("폴더 바꾸기", state.folder ? `지금: ${state.folder.name}` : "음악 폴더 고르기", () => { closeMSheet(); showFolderPicker(); }));
+    body.appendChild(menuRow("새로고침", "드라이브에 새로 올린 곡 반영", () => { closeMSheet(); if (state.folder) openFolder(state.folder); }, !onTracks));
+    body.appendChild(menuRow("태그 전부 다시 읽기", "곡 정보를 파일에서 처음부터 다시 읽기", () => { closeMSheet(); retagAll(); }, !onTracks));
+    const gap = document.createElement("div"); gap.style.height = "8px";
+    body.appendChild(gap);
+    body.appendChild(menuRow("로그아웃", "누르면 한 번 더 물어봐요", confirmLogout, false, true));
+    openMSheet({ title: "설정", body });
+  }
+
+  // 로그아웃 확인: 같은 #msheet 안에서 내용만 바뀜. [로그아웃]을 눌러야만 logout()
+  function confirmLogout() {
+    const body = document.createElement("div");
+    openMSheet({
+      title: "로그아웃할까요?",
+      sub: "받아둔 목록·기억한 폴더가 지워져요",
+      body,
+      ok: { label: "로그아웃", danger: true, fn: () => { logout(); } },
+    });
   }
 
   // 태그 전부 다시 읽기 — 앱에서 고친 곡이 있으면 버릴지 물어봄
@@ -2019,8 +2043,7 @@
 
   // ── 버튼 ──────────────────────────────────────────────────
   el.btnLogin.onclick = login;
-  el.btnLogout.onclick = logout;
-  el.btnFolder.onclick = () => showFolderPicker();
+  el.btnSettings.onclick = openSettingsMenu;
   // 맨 위 로고 = 첫 화면(곡 목록). 드라이브에 다시 묻지 않고, 듣던 곡·큐·섞기는 그대로
   function goHome() {
     closeSheet(); closeMSheet();
@@ -2037,17 +2060,6 @@
     renderLib();
   }
   el.btnHome.onclick = goHome;
-  let refreshTimer = null, refreshLong = false;
-  el.btnRefresh.addEventListener("pointerdown", () => {
-    refreshLong = false; clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => {
-      refreshLong = true;
-      retagAll();
-    }, 700);
-  });
-  for (const ev of ["pointerup", "pointerleave", "pointercancel"]) el.btnRefresh.addEventListener(ev, () => clearTimeout(refreshTimer));
-  el.btnRefresh.addEventListener("contextmenu", (e) => e.preventDefault());
-  el.btnRefresh.onclick = () => { if (refreshLong) { refreshLong = false; return; } if (state.folder) openFolder(state.folder); };
   el.btnFolderSearch.onclick = searchFolders;
   el.folderQ.addEventListener("keydown", (e) => { if (e.key === "Enter") searchFolders(); });
   el.libQ.addEventListener("input", renderLib);

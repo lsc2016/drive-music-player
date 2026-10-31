@@ -8,7 +8,7 @@
 - 작업이 일단락되면 "지금 상태"와 "다음 할 일"을 고쳐라.
 
 ## 구조 (파일 3개가 전부, 빌드 도구 없음)
-- `index.html` — 화면과 스타일(CSS는 이 파일 안에 있음). 홈 화면 앱은 `viewport-fit=cover`+`black-translucent`라 화면이 시계·노치 줄 밑까지 깔림 → 맨 위 `header`는 `--safe-t`(env safe-area-inset-top)만큼, 아래 고정 것들은 `--safe-b`만큼 띄움. 위·아래에 붙는 걸 새로 만들면 이 두 값을 꼭 더할 것. 화면 3개: 로그인 `#s-login`, 폴더 고르기 `#s-folder`, 재생목록 `#s-tracks`. 하단 고정 플레이어 `#player`.
+- `index.html` — 화면과 스타일(CSS는 이 파일 안에 있음). 홈 화면 앱은 `viewport-fit=cover`+`black-translucent`라 화면이 시계·노치 줄 밑까지 깔림 → 맨 위 `header`는 `--safe-t`(env safe-area-inset-top)만큼, 아래 고정 것들은 `--safe-b`만큼 띄움. 위·아래에 붙는 걸 새로 만들면 이 두 값을 꼭 더할 것. 화면 3개: 로그인 `#s-login`, 폴더 고르기 `#s-folder`, 재생목록 `#s-tracks`. 하단 고정 플레이어 `#player`. 맨 위 오른쪽은 ⚙ `#btn-settings` 하나(설정 메뉴).
 - `app.js` — 모든 동작. 즉시실행함수 하나 안에 섹션별로 나뉘어 있음: 로그인(토큰) → 드라이브 API → 폴더 화면 → 재생목록 화면 → 재생 순서 → 파일 받기 → 재생 제어 → Media Session → 이벤트 → 시작.
 - `config.js` — 사용자가 손대는 설정 (`CLIENT_ID`, `DEFAULT_FOLDER_NAME` 기본 "Music", `INCLUDE_SUBFOLDERS`). 코드에서는 `window.APP_CONFIG`로 읽음.
 - `icons/`(icon-32·180·192·512.png, 초록 정사각형 + 흰 음표) + `manifest.json` — "홈 화면에 추가"용 앱 아이콘·이름. `index.html` `<head>`에서 연결, 경로는 GitHub Pages 하위 경로 때문에 전부 상대경로. 아이콘을 바꾸면 PNG 네 개를 같이 다시 만들기(`sips`로 SVG→PNG).
@@ -34,7 +34,7 @@
 - 태그 읽기는 파일 일부만 받음: `remoteFile(t).getAt(위치, 길이, exact)`가 Range 요청(`driveFetch`에 `Range` 헤더)으로 조각을 받아 이어 붙임. `tagBlobOf()`가 형식별로 태그 부분만 Blob으로 만듦 — mp3는 ID3v2 머리의 길이만큼(없으면 끝 128바이트 ID3v1), flac은 메타데이터 블록 끝까지(작곡가·앨범아티스트·연도는 jsmediatags가 안 줘서 `flacComments()`로 직접), m4a는 맨 위 `ftyp`+`moov`만 이어 붙인 작은 파일(moov가 끝에 있어도 그 자리만 받음). 첫 요청은 m4a·flac 1MB, 그 외 128KB. 옛 한국 mp3의 EUC-KR 태그는 `fixKo()`로 다시 풂. `scanTags(all)`가 동시에 `TAG_WORKERS`(4)곡씩, `state.scanId`로 폴더 바뀌면 멈춤. 진행은 `#tag-progress`.
 - 보관함 저장: 드라이브 루트 `drive-music-library.md`(상수 `LIB_FILE`). 한 줄 `- 파일ID | 제목 | 아티스트 | 앨범 | 앨범아티스트 | 작곡가 | 장르 | 트랙 | 연도 | 폴더`(`serializeLibrary`/`parseLibrary`, 모든 폴더 곡이 한 파일에). `state.tagDb`(Map, 파일ID→{tags, folderName})가 내용. 폴더 열 때 `loadTagDb()` 먼저(한 번만) → 보관함에 없는 곡만 `scanTags()`. 25곡마다·끝날 때 `flushLibrary()`(겹치지 않게 `libSaving`), 업로드는 플레이리스트와 같이 `uploadMd()`(처음 multipart, 이후 PATCH). localStorage `dm:library`에도 복사.
 - 표지: 저장 안 함. `hasArt`도 파일엔 없어서 보관함에서 읽은 곡은 `null`(모름). 재생할 때 `loadArt()`가 받아둔 Blob을 jsmediatags로 다시 읽어 `state.arts`(최근 12곡 objectURL)에 → `#np-art-img`, Media Session artwork(없으면 `icons/icon-512.png`).
-- 새로고침 버튼: 클릭 = `openFolder(folder)`(새 곡만), 0.7초 길게 누르기 = `retagAll()`(전부 다시 — 고친 곡이 있으면 confirm으로 버릴지 물음 → `openFolder(folder, { retag: true, dropEdits })`).
+- 상단 ⚙ 설정 메뉴: header 오른쪽 아이콘은 `#btn-settings`(톱니) 하나뿐(예전 폴더·새로고침·로그아웃 아이콘 셋을 모음). 로그인한 뒤 곡 목록·폴더 고르기 화면에서만 보임(`show()`: `!signedIn || sub`면 숨김). 누르면 `openSettingsMenu()`(`openLibMenu()` 옆) → `#msheet`에 `menuRow` 네 줄: 폴더 바꾸기(작은 글씨 지금 폴더) `showFolderPicker()` / 새로고침 `openFolder(state.folder)`(새 곡만) / 태그 전부 다시 읽기 `retagAll()`(고친 곡이 있으면 confirm으로 버릴지 물음 → `openFolder(folder, { retag: true, dropEdits })`) / 로그아웃(`menuRow`의 다섯째 인자 danger = 빨간 글씨). 새로고침 두 줄은 `#s-tracks`+`state.folder`일 때만, 아니면 `off`. 로그아웃 줄 → `confirmLogout()`(같은 `#msheet`, `ok: {label:"로그아웃", danger:true}` 빨간 버튼) → 그 ok.fn 안에서만 `logout()`. **`logout`을 클릭에 바로 붙이지 말 것.** 시험 `python3 tests/check_settings_menu.py`.
 - 태그 고치기(음악 파일은 절대 안 건드림, `state.tagDb` → library.md만): **edited 규칙** — 앱에서 고친 곡은 tagDb 칸에 `edited: true`, library.md 줄 끝에 ` | edited`(11번째 칸). `scanTags(all, dropEdits)`는 edited 곡을 건너뜀(all이어도). `dropEdits`(= "고친 태그도 버릴까요?" 확인)일 때만 다시 읽어 edited를 지움. 읽는 도중 고친 곡도 덮지 않음. edited 곡은 `untagged()`가 false(알 수 없음으로 안 묶음). 고칠 땐 `ensureEntry(t)`(아직 안 읽은 곡이면 칸 만듦) → 값 바꾸고 → `afterLibEdit()`(= `saveLibrary()` 1.2초 뒤 `flushLibrary()` + 분류·플레이리스트·하단 플레이어 다시 그림).
 - 묶음 합치기/이름 바꾸기: 이름 목록 `#btn-group-edit`(편집) → `state.groupEditing`, 체크는 `state.groupChecked`(key), 2개 이상이면 `#btn-merge` → `openMerge(groups)`. 마우스(`canDrag`: hover+fine pointer)면 편집 아닐 때 줄 HTML5 drag&drop → 놓은 줄이 기본 선택. 편집 중 ✎·길게 누르기 → `openRename(g)`. 둘 다 `retagGroups(kind, groups, name, albumArtist)` — 앨범은 앨범아티스트도 고른 묶음 것으로 맞춤, 듣던 묶음이면 `state.source` 이름도 갱신.
 - 곡 ⋯(`trackRow`의 `onMore`) → `openTrackMenu()` → `openTagForm()`(`TAG_FIELDS`, `<datalist id="dl-artist|album|genre|composer">`는 `fillDatalists()`가 tagDb 값으로 채움).
@@ -50,7 +50,7 @@
 ## 작업 원칙
 - 지우고 새로 만들지 말고 있는 것에 더하고 보완하기. 파일 3개 구조와 "설정은 config.js 한 곳" 원칙 유지.
 - **모든 목록 화면은 머리(제목 줄 바로 아래)에 [▶ 재생](초록) [⇄ 섞기](회색) 칩을 둔다** — 누르면 "지금 보이는 그 목록"(검색으로 걸렀으면 결과만)이 큐가 됨. 새 목록 화면을 만들면 같은 모양·같은 자리로.
-- 화면의 개념을 흐리지 않기: 주(主)는 "곡 목록 + 하단 플레이어", 폴더 바꾸기·새로고침·로그아웃은 상단 아이콘(부가 기능).
+- 화면의 개념을 흐리지 않기: 주(主)는 "곡 목록 + 하단 플레이어", 폴더 바꾸기·새로고침·로그아웃은 상단 ⚙ 메뉴(부가 기능).
 - 설명은 쉬운 말로. 전문 용어가 필요하면 생김새나 비유로 풀어서.
 - 새 기능 넣으면 README의 "쓰는 법"·"자주 나오는 문제"도 맞춰 고치기.
 - 검증: `node --check app.js` 후 `./serve.sh`로 열어 폰 너비(390px)에서도 깨지지 않는지 보기.
