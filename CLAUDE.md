@@ -57,3 +57,40 @@
 
 ## 다음에 할 만한 것
 - 진행.md의 "다음 할 일"에 모아 둠.
+
+## 고치는 규칙 (덧붙임)
+- 사람이 승인하기 전에 데이터 파일·설정 파일(`config.js`, 드라이브의 `drive-music-playlists.md`·`drive-music-library.md`)을 지우거나 덮어쓰지 않기.
+- 삭제 명령(rm -rf 등)은 쓰지 않기.
+- 어느 화면에서든 첫 화면으로 돌아갈 길(로고 `#btn-home` → `goHome()`)을 없애지 않기.
+
+## 읽는 양 줄이기
+`app.js` 는 2천 줄이 넘는다. 통째로 읽지 말고 `// ── 섹션 이름` 줄을 grep 해서 그 섹션만 읽어라 (`grep -n "^  // ──" app.js`).
+| 이런 일이면 | 이것만 읽어라 |
+|---|---|
+| 로그인·토큰 | app.js "로그인" 섹션 |
+| 드라이브 목록·폴더 찾기 | app.js "드라이브 API", "폴더 고르기 화면" |
+| 분류 칩·묶음 | app.js "보관함 분류" |
+| 태그 고치기·합치기·되돌리기 | app.js "보관함 고치기", "태그 목록 편집 화면" |
+| playlists.md / library.md 저장 | app.js "플레이리스트: 드라이브의 .md", "보관함: 곡 태그를" |
+| 태그 읽기(Range) | app.js "음악 태그 읽기" |
+| 재생·다음 곡·잠금화면 | app.js "파일 받아오기", "재생 제어", "Media Session" |
+| 화면 모양·CSS | `index.html` (해당 `#아이디` 로 grep) |
+| 설정값 | `config.js` |
+
+열지 말 것: `icons/*.png` (그림).
+
+## 폴더 지도 (위 "구조"에 없는 것만)
+- `tests/check_queue_sheet.py`, `tests/check_settings_menu.py` — app.js·index.html 글을 정규식으로 훑는 자동 검사 (브라우저 없이).
+- `진행.md` — 지금 상태·정한 것·다음 할 일.
+
+## 다른 프로젝트와의 연결
+- 없음 (다른 저장소에서 이 앱의 파일 이름을 찾지 못함).
+
+## 저장소 밖
+- 구글 드라이브의 `drive-music-playlists.md`, `drive-music-library.md` (앱이 만들고 고침), 음악 폴더(기본 "Music").
+- 구글 클라우드 콘솔의 OAuth 클라이언트 설정("승인된 JavaScript 원본"에 쓰는 주소들).
+- CDN: jsmediatags 3.9.5 (cdnjs), Google Identity Services (`accounts.google.com/gsi/client`).
+
+## 모르는 것
+- 실제로 올려 둔 주소(GitHub Pages 하위 경로)가 어디인지 — 확인 필요.
+- 드라이브에 같은 이름의 .md 파일이 둘 이상 생겼을 때 어느 것을 읽는지 (`pageSize 1`, 순서 지정 없음) — 확인 필요.
