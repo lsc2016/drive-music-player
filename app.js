@@ -65,6 +65,7 @@
     tagDb: new Map(),     // 파일ID -> { tags, folderName } (drive-music-library.md 내용, 모든 폴더)
     libFileId: null,      // 드라이브에 있는 보관함 파일 id
     libDirty: false, libSaving: false, libAgain: false, libSaveTimer: null,
+    libLooked: false,     // 드라이브에서 보관함 파일을 찾아봤는지 (찾기에 실패했으면 false → 새로 만들지 않고 다시 찾음)
     groupEditing: false, groupChecked: new Set(),   // 이름 목록 "편집"(합치기) 중 / 체크한 묶음 key
     scanId: 0,            // 태그 읽기 차례 번호 — 폴더를 바꾸면 이전 읽기는 멈춤
     openSeq: 0,           // 폴더 열기 차례 번호 — 그새 다른 폴더를 열면 늦게 온 결과는 버림
@@ -75,6 +76,7 @@
     playlists: [],        // [{ name, items: [{ id, title, folderName }] }]
     plFileId: null,       // 드라이브에 있는 플레이리스트 파일 id
     plDirty: false, plSaveTimer: null,
+    plLooked: false,      // 드라이브에서 플레이리스트 파일을 찾아봤는지 (libLooked 와 같은 뜻)
     openPl: null,         // 상세 화면에 열린 플레이리스트 이름
     plEditing: false,
     sheetTrack: null,     // 바텀시트에 올라온 곡
@@ -213,8 +215,8 @@
     state.token = null;
     sessionStorage.removeItem("dm:token");
     stopPlayback();
-    state.playlists = []; state.plFileId = null; state.library = []; state.libFor = null;
-    state.scanId++; state.tagDb = new Map(); state.libFileId = null; tagDbLoading = null; store.del("library"); store.del("libundo");
+    state.playlists = []; state.plFileId = null; state.plLooked = false; state.library = []; state.libFor = null;
+    state.scanId++; state.tagDb = new Map(); state.libFileId = null; state.libLooked = false; tagDbLoading = null; store.del("library"); store.del("libundo");
     for (const k of store.get("libkeys", [])) store.del("lib:" + k);
     store.del("libkeys");
     store.del("folder"); store.del("queue"); state.folder = null;   // 다음 로그인은 기본 폴더(Music) 찾기부터
@@ -1243,6 +1245,7 @@
       q: `name = '${PL_FILE}' and trashed = false`, fields: "files(id, name, modifiedTime)", spaces: "drive", pageSize: "1",
     });
     const j = await res.json();
+    state.plLooked = true;   // 찾기는 됐음 (파일이 없으면 다음 저장 때 처음 만듦)
     if (j.files && j.files.length) {
       state.plFileId = j.files[0].id;
       const r2 = await driveFetch(`/files/${state.plFileId}`, { alt: "media" });
@@ -1266,6 +1269,16 @@
     if (!state.plDirty) return;
     state.plDirty = false;
     try {
+      if (!state.plFileId && !state.plLooked) {   // 처음 찾기가 실패했었음 → 새 파일을 만들기 전에 다시 찾아봄 (또 실패하면 아래 catch → 5초 뒤 다시)
+        const id = await findMd(PL_FILE);
+        state.plLooked = true;
+        if (id) {   // 드라이브에 있었음 → 그 파일에만 있는 플레이리스트는 살려서 같이 올림
+          state.plFileId = id;
+          const r2 = await driveFetch(`/files/${id}`, { alt: "media" });
+          for (const p of parsePlaylists(await r2.text())) if (!getPl(p.name)) state.playlists.push(p);
+          store.set("playlists", state.playlists);
+        }
+      }
       state.plFileId = await uploadMd(state.plFileId, PL_FILE, serializePlaylists());
       el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
     } catch (e) {
@@ -1275,6 +1288,15 @@
     }
   }
   window.addEventListener("pagehide", () => { if (state.plDirty) flushPlaylists(); });
+
+  // 드라이브에서 .md 파일 찾기: 있으면 id, 정말 없으면 null. 인터넷·권한 문제로 못 찾으면 오류를 던짐(= 있는지 모름)
+  async function findMd(name) {
+    const res = await driveFetch("/files", {
+      q: `name = '${name}' and trashed = false`, fields: "files(id)", spaces: "drive", pageSize: "1",
+    });
+    const j = await res.json();
+    return j.files && j.files.length ? j.files[0].id : null;
+  }
 
   // 드라이브에 .md 파일 올리기: 처음엔 새로 만들고(multipart), 그다음부턴 내용만 바꿈(PATCH)
   async function uploadMd(fileId, name, body) {
@@ -1337,6 +1359,7 @@
           q: `name = '${LIB_FILE}' and trashed = false`, fields: "files(id)", spaces: "drive", pageSize: "1",
         });
         const j = await res.json();
+        state.libLooked = true;   // 찾기는 됐음 (파일이 없으면 다음 저장 때 처음 만듦)
         if (j.files && j.files.length) {
           state.libFileId = j.files[0].id;
           const r2 = await driveFetch(`/files/${state.libFileId}`, { alt: "media" });
@@ -1355,6 +1378,18 @@
     if (!state.libDirty) return;
     state.libSaving = true; state.libDirty = false;
     try {
+      if (!state.libFileId && !state.libLooked) {   // 처음 찾기가 실패했었음 → 새 파일을 만들기 전에 다시 찾아봄 (또 실패하면 아래 catch → 5초 뒤 다시)
+        const id = await findMd(LIB_FILE);
+        state.libLooked = true;
+        if (id) {   // 드라이브에 있었음 → 여기 없는 곡과 앱에서 고친(edited) 값은 드라이브 것을 살림
+          state.libFileId = id;
+          const r2 = await driveFetch(`/files/${id}`, { alt: "media" });
+          for (const [fid, e] of parseLibrary(await r2.text())) {
+            const cur = state.tagDb.get(fid);
+            if (!cur || (e.edited && !cur.edited)) state.tagDb.set(fid, e);
+          }
+        }
+      }
       const obj = {};
       for (const [id, e] of state.tagDb) obj[id] = { tags: { ...e.tags, hasArt: null }, folderName: e.folderName, edited: !!e.edited };
       store.set("library", obj);
