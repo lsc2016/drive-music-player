@@ -13,6 +13,7 @@
   const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
   const PL_FILE = "drive-music-playlists.md";   // 드라이브에 저장되는 플레이리스트 파일
   const FAV = "즐겨찾기";                         // ♥ 누르면 들어가는 기본 플레이리스트
+  const SAVE_RETRY_MAX = 5;   // 저장 실패 때 5초 뒤 다시 시도하는 최대 횟수 (그다음은 고칠 때·페이지를 떠날 때 다시)
   const LIB_FILE = "drive-music-library.md";     // 드라이브에 저장되는 곡 태그(보관함) 파일
   const TAG_WORKERS = 4;                         // 태그는 동시에 4곡씩만 읽음
   const LANGS = ["한국어", "중국어", "영어", "일본어", "기타"];   // 언어 태그 값 (이 순서로 보여줌)
@@ -76,6 +77,7 @@
     playlists: [],        // [{ name, items: [{ id, title, folderName }] }]
     plFileId: null,       // 드라이브에 있는 플레이리스트 파일 id
     plDirty: false, plSaveTimer: null,
+    plFails: 0, libFails: 0,   // 드라이브 저장이 잇달아 실패한 횟수 (SAVE_RETRY_MAX 번이 넘으면 다시 시도를 멈춤)
     plLooked: false,      // 드라이브에서 플레이리스트 파일을 찾아봤는지 (libLooked 와 같은 뜻)
     openPl: null,         // 상세 화면에 열린 플레이리스트 이름
     plEditing: false,
@@ -249,6 +251,11 @@
     const token = await getToken();
     const url = new URL((opts.upload ? UPLOAD_API : API) + path);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    // 인터넷이 끊겨 fetch 자체가 실패하면 영어 오류("Failed to fetch") 대신 쉬운 말로
+    const fetch = (u, o) => window.fetch(u, o).catch((e) => {
+      if (e && e.name === "AbortError") throw e;
+      throw new Error("인터넷 연결을 확인해 주세요.");
+    });
     let res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + token } });
     if (res.status === 401) { // 열쇠가 만료됐으면 한 번 더
       state.token = null;
@@ -819,6 +826,7 @@
   // savePlaylists처럼: 바로 기억 + 1.2초 뒤 드라이브에 올림
   function saveLibrary() {
     state.libDirty = true;
+    state.libFails = 0;
     clearTimeout(state.libSaveTimer);
     state.libSaveTimer = setTimeout(flushLibrary, 1200);
   }
@@ -1242,7 +1250,7 @@
     state.playlists = store.get("playlists", []);
     el.plSync.innerHTML = `<span class="spinner"></span>`;
     const res = await driveFetch("/files", {
-      q: `name = '${PL_FILE}' and trashed = false`, fields: "files(id, name, modifiedTime)", spaces: "drive", pageSize: "1",
+      q: `name = '${PL_FILE}' and trashed = false`, fields: "files(id, name, modifiedTime)", spaces: "drive", pageSize: "1", orderBy: "modifiedTime desc",
     });
     const j = await res.json();
     state.plLooked = true;   // 찾기는 됐음 (파일이 없으면 다음 저장 때 처음 만듦)
@@ -1261,6 +1269,7 @@
   function savePlaylists() {
     store.set("playlists", state.playlists);
     state.plDirty = true;
+    state.plFails = 0;
     el.plSync.textContent = "저장 중…";
     clearTimeout(state.plSaveTimer);
     state.plSaveTimer = setTimeout(flushPlaylists, 1200);  // 연달아 고칠 때 한 번만 올림
@@ -1281,10 +1290,15 @@
       }
       state.plFileId = await uploadMd(state.plFileId, PL_FILE, serializePlaylists());
       el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
+      state.plFails = 0;
     } catch (e) {
       state.plDirty = true;
-      el.plSync.textContent = "저장 실패 — 다시 시도함";
-      setTimeout(flushPlaylists, 5000);
+      if (++state.plFails <= SAVE_RETRY_MAX) {
+        el.plSync.textContent = "저장 실패 — 다시 시도함";
+        setTimeout(flushPlaylists, 5000);
+      } else {
+        el.plSync.textContent = "저장 실패 — 인터넷·권한을 확인해 주세요";   // 이 기기엔 남아 있음, 다음에 고칠 때 다시 올림
+      }
     }
   }
   window.addEventListener("pagehide", () => { if (state.plDirty) flushPlaylists(); });
@@ -1292,7 +1306,7 @@
   // 드라이브에서 .md 파일 찾기: 있으면 id, 정말 없으면 null. 인터넷·권한 문제로 못 찾으면 오류를 던짐(= 있는지 모름)
   async function findMd(name) {
     const res = await driveFetch("/files", {
-      q: `name = '${name}' and trashed = false`, fields: "files(id)", spaces: "drive", pageSize: "1",
+      q: `name = '${name}' and trashed = false`, fields: "files(id)", spaces: "drive", pageSize: "1", orderBy: "modifiedTime desc",
     });
     const j = await res.json();
     return j.files && j.files.length ? j.files[0].id : null;
@@ -1356,7 +1370,7 @@
       for (const [id, e] of Object.entries(store.get("library", {}))) if (e && e.tags) state.tagDb.set(id, e);
       try {
         const res = await driveFetch("/files", {
-          q: `name = '${LIB_FILE}' and trashed = false`, fields: "files(id)", spaces: "drive", pageSize: "1",
+          q: `name = '${LIB_FILE}' and trashed = false`, fields: "files(id)", spaces: "drive", pageSize: "1", orderBy: "modifiedTime desc",
         });
         const j = await res.json();
         state.libLooked = true;   // 찾기는 됐음 (파일이 없으면 다음 저장 때 처음 만듦)
@@ -1394,10 +1408,15 @@
       for (const [id, e] of state.tagDb) obj[id] = { tags: { ...e.tags, hasArt: null }, folderName: e.folderName, edited: !!e.edited };
       store.set("library", obj);
       state.libFileId = await uploadMd(state.libFileId, LIB_FILE, serializeLibrary());
+      state.libFails = 0;
     } catch (e) {
       state.libDirty = true;
-      console.warn("보관함 저장 실패 — 다시 시도함", e);
-      setTimeout(flushLibrary, 5000);
+      if (++state.libFails <= SAVE_RETRY_MAX) {
+        console.warn("보관함 저장 실패 — 다시 시도함", e);
+        setTimeout(flushLibrary, 5000);
+      } else {
+        console.warn("보관함 저장 실패 — 다시 시도를 멈춤 (다음에 고칠 때 다시 올림)", e);
+      }
     } finally {
       state.libSaving = false;
       if (state.libAgain) { state.libAgain = false; flushLibrary(); }
