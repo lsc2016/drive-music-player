@@ -259,6 +259,10 @@
     #msheet .btns { display: flex; gap: 8px; margin-top: 12px; flex: none; }
     #msheet .btns button { flex: 1; padding: 12px; border-radius: 12px; background: var(--panel-2); font-weight: 700; }
     #msheet .btns button.ok { background: var(--accent); color: #06130a; }
+    /* 바텀시트 오른쪽 위 ✕ (Esc·바깥 누르기와 같은 닫기) */
+    .sheet-x { position: absolute; top: 10px; right: 12px; width: 34px; height: 34px; z-index: 1; }
+    .sheet-x svg { width: 18px; height: 18px; }
+    #sheet h3, #msheet h3, #sheet .sub, #msheet .sub { padding-right: 40px; }
     #msheet .qnote { color: var(--muted); font-size: 12.5px; text-align: center; padding: 8px 0 4px; flex: none; }   /* 다음 곡 시트: 처음부터 다시 · 외 N곡 · 마지막 곡 */
 
     /* 이름 목록 편집(합치기) */
@@ -468,6 +472,7 @@
 <!-- 플레이리스트에 담기 (바텀시트) -->
 <div id="dim"></div>
 <div id="sheet">
+  <button class="iconbtn sheet-x" id="sheet-x" title="닫기 (Esc)"><svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
   <div class="grab"></div>
   <h3>플레이리스트에 담기</h3>
   <div class="sub" id="sheet-track"></div>
@@ -479,7 +484,7 @@
     </button>
   </div>
 </div>
-<div id="msheet"><div class="grab"></div><h3 id="msheet-title"></h3><div class="sub" id="msheet-sub"></div><div class="body" id="msheet-body"></div><div class="btns hidden" id="msheet-btns"><button id="msheet-cancel">취소</button><button class="ok" id="msheet-ok">확인</button></div></div>
+<div id="msheet"><button class="iconbtn sheet-x" id="msheet-x" title="닫기 (Esc)"><svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button><div class="grab"></div><h3 id="msheet-title"></h3><div class="sub" id="msheet-sub"></div><div class="body" id="msheet-body"></div><div class="btns hidden" id="msheet-btns"><button id="msheet-cancel">취소</button><button class="ok" id="msheet-ok">확인</button></div></div>
 <datalist id="dl-artist"></datalist><datalist id="dl-album"></datalist><datalist id="dl-genre"></datalist><datalist id="dl-composer"></datalist>
 <div class="toast" id="toast"></div>
 
