@@ -20,8 +20,11 @@
 - 지워진 폴더: `openFolder`가 음악 목록과 함께 `checkFolder(folder)`(GET /files/id, 404·403·휴지통이면 `e.gone`; `driveFetch` 오류엔 `err.status`가 붙음)를 부름 → gone이면 `dm:folder`·캐시 지우고 `openDefaultFolder()`부터 다시(기본 폴더에서 온 거면 반복 막으려 폴더 고르기로).
 - 곡 목록 캐시: localStorage `dm:lib:<폴더ID>` = `[id, name, size, mimeType, folderName]` 배열(태그는 안 넣음 — 태그는 `dm:library`/library.md 쪽이라 겹치지 않음), 최근 5개 폴더만(`dm:libkeys`). `openFolder`가 캐시 있으면 `setLibrary(cached)`로 먼저 그리고(이때 `loadTagDb()`의 이 기기 복사본도 이미 들어와 있음), 드라이브 목록이 오면 `libChanged()`면 `refreshLibrary()`(듣던 곡·받아둔 파일 유지, 목록만 교체), 같으면 `attachTags()`+`renderLib()`. 그새 다른 폴더를 열면 `state.openSeq`로 늦은 결과 버림. 로그아웃하면 캐시와 기억된 폴더(`dm:folder`)를 지움 → 다음 로그인은 기본 폴더 찾기부터.
 - 파일 목록: Drive v3 `files.list`, 폴더를 BFS로 돌며 `mimeType contains 'audio/'` 또는 확장자(`AUDIO_EXT`)로 거름. 폴더명→파일명 순 정렬(`Intl.Collator ko, numeric`).
-- 재생: `<audio>`는 헤더를 못 붙이므로 `alt=media`로 fetch → Blob → `URL.createObjectURL`. 받아둔 파일은 `state.blobUrls`에 최근 6곡까지, 다음 곡은 `prefetchNext()`로 미리 받음. (스트리밍이 아니라 통째로 받은 뒤 재생.)
-- 기억: `localStorage` 키 `dm:folder`, `dm:last:<folderId>`, `dm:shuffle`, `dm:repeat`, `dm:lib:<folderId>`(곡 목록 캐시).
+- 재생: `<audio id="audio">` 하나(`el.audio`)만, `src`만 바꿔 끼움(new Audio·AudioContext 금지). **바로 듣기**: `fetchTrackUrl()`이 받지 않고 `streamUrl(id)` = `files/<ID>?alt=media&supportsAllDrives=true&access_token=<열쇠>`를 돌려줌(`<audio>`는 헤더를 못 붙여서 열쇠를 주소에). 이 주소는 store·console·화면 글에 절대 안 넣음(저장은 곡 ID만). **대체**: 바로 듣기 주소가 `loadedmetadata` 전에 오류(열쇠는 멀쩡, 이번 접속에서 바로 듣기가 한 번도 안 됨 `streamWorked`)면 `state.streamOff = true` → 이번 접속 동안 예전처럼 `alt=media` fetch → Blob(`state.blobUrls` 최근 6곡, `trimBlobs()`, `prefetchNext()`가 미리 받음), 하단 글씨·토스트 `FALLBACK_MSG` "…(대체됨)" + `console.warn`. 듣는 중 오류(열쇠 끝나 401)는 `error`의 `lost`(바로 듣기면 늘 lost) → `retryId` 한 번 `playCurrent(at)`(새 열쇠 주소, `seekOnMeta`로 길이 안 뒤 그 자리). 표지는 바로 듣기면 `loadArt()`가 `tagBlobOf()`(Range)로.
+- 다음 곡 준비: 재생이 시작되면 `afterStart()` → `prefetchNext()`가 `state.nextReady = {id, pos, url, stream}`. 열쇠가 "지금 곡 남은 시간 + 다음 곡(모르면 `NEXT_GUESS` 10분)"보다 짧으면 화면이 앞일 때만 `requestToken("")`. `scheduleTokenRefresh()`가 앞에 있을 때 끝나기 5분 전(`TOKEN_EARLY`) 조용히 새 열쇠. `ended`·`next()`는 먼저 `playReady()` — 준비된 곡이 지금 순서의 다음(id·pos)이면 `el.audio.src = url` → `play()`를 기다림 없이, 화면·`saveQueue()`·잠금화면 정보는 그 뒤. 아니면 `playCurrent()`. `rebuildOrder`·`setQueue`·`playCurrent`가 `nextReady`를 버리고 `toggleShuffle`·`cycleRepeat`·`refreshLibrary`·visible 이 `renewNext()`로 다시.
+- 잠금화면: 버튼은 `setupMediaSession()`(init에서 한 번), ▶ = `togglePlay("play")`(주소 없거나 열쇠 끝났으면 `stale` → 다시 걸기), ⏸ = `wantPlay` 끔. `updateMediaSession()`은 곡 정보만. `playbackState`는 play·pause 이벤트, `syncPosition()`이 `setPositionState`(try).
+- 이어 듣기: `state.wantPlay`(playing에서 켬, ⏸·잠금화면 ⏸·`stopPlayback`·큐 끝에서 끔, 시스템 pause는 그대로). `saveResume()`이 5초마다·pause·hidden·pagehide 때 `dm:resume` = {folderId, id, at, playing}. visible·pageshow·`tokenLost` 때 `checkResume()` → 하단 `#btn-resume`(▶ 이어 듣기) → `resumeNow()`: 주소가 살아 있으면 `play()`만, 아니면 `togglePlay("play", at)`(await 없이 열쇠 요청 → `playCurrent(at)`). 다시 열면 `setLibrary`가 dm:resume을 보고 단추·▶가 그 초부터. 홈 화면 아이콘(standalone)일 때만 `#standalone-note` "사파리 탭으로…" 한 줄(✕ → `dm:standalonenote`). 시험 `python3 tests/check_background.py`.
+- 기억: `localStorage` 키 `dm:folder`, `dm:last:<folderId>`, `dm:shuffle`, `dm:repeat`, `dm:lib:<folderId>`(곡 목록 캐시), `dm:resume`(듣던 곡 ID·초), `dm:standalonenote`.
 - 섞기는 `state.order`(인덱스 배열)만 섞고 `state.tracks`는 그대로 둠. 현재 곡 위치는 `state.pos`(order 기준).
 - 곡 출처 두 가지: `state.library`(폴더 전체 곡)와 `state.playlists`. 실제 재생 큐는 `state.tracks` + `state.source`(`{type:"library"}` 또는 `{type:"playlist", name}`)이고, `setQueue()`로 바꿈. 폴더 새로고침은 라이브러리만 갈고 플레이리스트 재생 중이면 큐를 건드리지 않음.
 - 플레이리스트 저장: 드라이브 루트의 `drive-music-playlists.md`(상수 `PL_FILE`). `serializePlaylists`/`parsePlaylists`가 `## 이름` + `- 제목 | 파일ID | 폴더` 형식을 읽고 씀. 바꾸면 `savePlaylists()` → localStorage 즉시 + 1.2초 뒤 `flushPlaylists()`로 드라이브 업로드(처음엔 multipart 생성, 이후 PATCH media). 이 때문에 scope에 `drive.file` 추가됨. `즐겨찾기`(상수 `FAV`)는 ♥ 버튼용 기본 플레이리스트.
@@ -80,7 +83,7 @@
 열지 말 것: `icons/*.png` (그림).
 
 ## 폴더 지도 (위 "구조"에 없는 것만)
-- `tests/check_queue_sheet.py`, `tests/check_settings_menu.py` — app.js·index.html 글을 정규식으로 훑는 자동 검사 (브라우저 없이).
+- `tests/check_queue_sheet.py`, `tests/check_settings_menu.py`, `tests/check_playback.py`, `tests/check_wayfinding.py`, `tests/check_background.py` — app.js·index.html 글을 정규식으로 훑는 자동 검사 (브라우저 없이).
 - `진행.md` — 지금 상태·정한 것·다음 할 일.
 
 ## 다른 프로젝트와의 연결

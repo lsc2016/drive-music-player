@@ -49,7 +49,8 @@
     msheetBtns: $("msheet-btns"), msheetCancel: $("msheet-cancel"), msheetOk: $("msheet-ok"),
     sheetX: $("sheet-x"), msheetX: $("msheet-x"),
     player: $("player"), npTitle: $("np-title"), npSub: $("np-sub"), npLoading: $("np-loading"),
-    npArt: $("np-art"), npArtImg: $("np-art-img"),
+    npArt: $("np-art"), npArtImg: $("np-art-img"), btnResume: $("btn-resume"),
+    standaloneNote: $("standalone-note"), standaloneNoteX: $("standalone-note-x"),
     tCur: $("t-cur"), tDur: $("t-dur"), seek: $("seek"),
     btnShuffle: $("btn-shuffle"), btnPrev: $("btn-prev"), btnPlay: $("btn-play"),
     btnNext: $("btn-next"), btnRepeat: $("btn-repeat"),
@@ -95,6 +96,13 @@
     tokenLost: false,     // 열쇠를 못 받아 재생이 멈췄음 (▶를 누르면 다시 받음)
     seeking: false,
     queueOpen: false,     // 다음 곡 시트가 열려 있음 (곡이 바뀌면 다시 그림)
+    streamOff: false,     // 바로 듣기 주소가 안 돼 이번 접속 동안 통째로 받아 틂 (대체됨)
+    fallbackNote: false,  // "대체됨" 안내를 재생이 시작되면 한 번 띄움
+    nextReady: null,      // 미리 준비한 다음 곡 { id, pos, url, stream } — ended 에서 기다림 없이 바로 씀
+    metaOk: null,         // loadedmetadata 까지 간 오디오 주소 (그 전에 오류면 바로 듣기가 안 되는 것)
+    streamWorked: false,  // 이번 접속에서 바로 듣기 주소가 한 번이라도 재생됐음
+    seekOnMeta: 0,        // 길이를 안 뒤(loadedmetadata) 옮길 자리(초)
+    wantPlay: false,      // 사람이 듣고 싶어 하는 중 (직접 멈추면 끔, 전화·iOS가 멈춘 건 그대로)
   };
 
   const store = {
@@ -215,6 +223,7 @@
         if (resp.error) return reject(new Error(resp.error_description || resp.error));
         state.token = { access_token: resp.access_token, expires_at: Date.now() + (resp.expires_in || 3600) * 1000 };
         sessionStorage.setItem("dm:token", JSON.stringify(state.token));
+        scheduleTokenRefresh();
         resolve(state.token);
       };
       state.tokenClient.error_callback = (e) => { clearTimeout(timer); reject(new Error(e && e.message ? e.message : "로그인 창이 닫혔어요.")); };
@@ -236,6 +245,22 @@
     }
     return state.token.access_token;
   }
+
+  // 화면이 앞에 있는 동안 열쇠가 끝나기 5분쯤 전에 조용히 새로 받아 둠 (바로 듣기 주소는 열쇠가 살아 있어야 해서)
+  //  뒤에 가 있으면 구글 창이 막히므로 억지로 받지 않음 — 앞으로 돌아오면(visibilitychange) 다시 잡음
+  const TOKEN_EARLY = 5 * 60_000;
+  let tokenTimer = null;
+  function scheduleTokenRefresh() {
+    clearTimeout(tokenTimer); tokenTimer = null;
+    if (!state.token || !state.token.expires_at) return;
+    const wait = Math.max(1000, state.token.expires_at - Date.now() - TOKEN_EARLY);
+    tokenTimer = setTimeout(() => {
+      tokenTimer = null;
+      if (document.visibilityState !== "visible" || !state.token) return;
+      requestToken("").then(() => renewNext()).catch(() => {});
+    }, wait);
+  }
+  const tokenLeftMs = () => (state.token && state.token.expires_at ? state.token.expires_at - Date.now() - 60_000 : 0);
 
   async function login() {
     if (!CFG.CLIENT_ID || CFG.CLIENT_ID.includes("여기에")) {
@@ -259,8 +284,10 @@
   function logout() {
     if (state.token && window.google) try { google.accounts.oauth2.revoke(state.token.access_token, () => {}); } catch {}
     state.token = null;
+    clearTimeout(tokenTimer); tokenTimer = null;
     sessionStorage.removeItem("dm:token");
     stopPlayback();
+    store.del("resume");
     state.playlists = []; state.plFileId = null; state.plLooked = false; state.library = []; state.libFor = null;
     state.scanId++; state.tagDb = new Map(); state.libFileId = null; state.libLooked = false; tagDbLoading = null; store.del("library"); store.del("libundo");
     for (const k of store.get("libkeys", [])) store.del("lib:" + k);
@@ -502,6 +529,7 @@
       state.tracks = tracks; state.pos = -1;
       rebuildOrder();
       if (cur) { const i = tracks.findIndex((t) => t.id === cur.id); if (i >= 0) state.pos = state.order.indexOf(i); }
+      renewNext();   // 순서가 새로 생겼으니 준비해 둔 다음 곡도 다시
     }
     el.tracksEmpty.classList.toggle("hidden", tracks.length > 0);
     renderLib();
@@ -523,7 +551,12 @@
     // 처음 열 때(아직 큐가 없음): 지난번 듣던 큐(출처·순서)가 이 폴더 것이면 그대로 되살림
     if (!state.tracks.length && restoreQueue(tracks)) {
       const cur = currentTrack();
-      if (cur) { showNowPlaying(cur); el.player.classList.add("show"); }
+      if (cur) {
+        showNowPlaying(cur); el.player.classList.add("show");
+        // 듣던 중에 페이지가 닫혔으면(아이폰이 뒤에서 앱을 내림) 그 자리부터 이어 듣기
+        const r = store.get("resume", null);
+        if (r && r.folderId === state.folder.id && r.id === cur.id && r.playing) { state.wantPlay = true; checkResume(); }
+      }
     }
     // 출처를 전체 곡으로 — 플레이리스트를 듣던 중이면 그대로 둠
     else if (state.source.type === "library" || !state.tracks.length) {
@@ -543,6 +576,7 @@
 
   // 출처(전체 곡 / 플레이리스트)를 바꿔서 재생 큐를 새로 만듦
   function setQueue(source, tracks) {
+    state.nextReady = null;   // 큐가 바뀌면 준비해 둔 다음 곡은 버림 (재생이 시작되면 다시 준비)
     state.source = source;
     state.tracks = tracks;
     state.pos = -1;
@@ -1639,6 +1673,7 @@
   // ── 재생 순서 ──────────────────────────────────────────────
   function rebuildOrder() {
     const curId = currentTrack() && currentTrack().id;
+    state.nextReady = null;   // 순서가 바뀌면 준비해 둔 다음 곡은 버림
     state.order = state.tracks.map((_, i) => i);
     if (state.shuffle) {
       for (let i = state.order.length - 1; i > 0; i--) {
@@ -1893,18 +1928,21 @@
       if (cur !== t) cur.tags = t.tags;
       showNowPlayingText(cur); updateMediaSession(cur);
       // 태그 읽기 전에 재생을 시작했으면 표지를 지금 붙임
-      const url = state.blobUrls.get(cur.id);
+      const url = state.audioFor === cur.id ? el.audio.src : "";   // 받아둔 파일이든 바로 듣기 주소든
       if (url && cur.tags.hasArt && !state.arts.has(cur.id))
         loadArt(cur, url).then((art) => { if (art && currentTrack() === cur) { showArt(art); updateMediaSession(cur, art); } });
     }
   }
 
-  // 표지: 재생할 때 받아둔 파일에서 다시 읽음 (메모리에만, 최근 12곡)
+  // 표지: 재생할 때 다시 읽음 (메모리에만, 최근 12곡)
+  //  통째로 받아둔 파일(blob: 주소)이면 그걸, 바로 듣기면 태그 읽기와 같은 길(Range)로 앞부분만 받아서
+  //  재생보다 늦게, 기다리지 않고 부름 (부르는 쪽은 .then)
   async function loadArt(t, url) {
     if (!window.jsmediatags || (t.tags && t.tags.hasArt === false)) return null;
     if (state.arts.has(t.id)) return state.arts.get(t.id);
     try {
-      const blob = await (await fetch(url)).blob();
+      const blob = String(url || "").startsWith("blob:") ? await (await fetch(url)).blob() : ((await tagBlobOf(t)) || {}).blob;
+      if (!blob) return null;
       const r = await readTagBlob(blob);
       const pic = r && r.tags && r.tags.picture;
       if (t.tags) t.tags.hasArt = !!(pic && pic.data && pic.data.length);
@@ -1927,11 +1965,22 @@
   const BLOB_MAX = 6;            // 받아둔 파일은 최근 6곡만 (지금 곡은 빼고 오래된 것부터 지움)
   const fetching = new Map();    // trackId -> 받는 중인 약속 (같은 곡을 두 번 받지 않게)
   const audioUses = (u) => !!u && el.audio.src === u;   // 오디오가 지금 이 주소를 쓰고 있음
-  async function fetchTrackUrl(track) {
+  // 바로 듣기 주소: <audio>는 머리말(헤더)을 못 붙여서 열쇠를 주소에 넣음.
+  //  ※ 이 주소는 화면·localStorage·console·오류 글에 절대 넣지 않음 (저장은 곡 ID만)
+  const streamUrl = (id) => `${API}/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true&access_token=${encodeURIComponent(state.token.access_token)}`;
+  const isStreamUrl = (u) => !!u && String(u).startsWith(API + "/files/");
+  const FALLBACK_MSG = "바로 듣기가 안 돼 통째로 받아 틀어요(대체됨)";
+  // 곡 주소 만들기. 기본은 바로 듣기 주소(받지 않고 주소만) — <audio>가 알아서 조금씩 받음
+  //  whole=true 거나 바로 듣기가 안 되는 접속(state.streamOff, 대체됨)이면 예전처럼 통째로 받아 Blob 주소
+  async function fetchTrackUrl(track, { whole = false } = {}) {
     if (state.blobUrls.has(track.id)) {
       const u = state.blobUrls.get(track.id);
       state.blobUrls.delete(track.id); state.blobUrls.set(track.id, u);   // 다시 쓴 곡은 "최근"으로
       return u;
+    }
+    if (!whole && !state.streamOff) {
+      if (tokenValid()) return streamUrl(track.id);
+      return getToken().then(() => streamUrl(track.id));   // await 없이 — ▶ 누름 효력이 구글 창까지 가게
     }
     if (fetching.has(track.id)) return fetching.get(track.id);   // 미리 받는 중이면 그걸 같이 기다림
     const p = (async () => {
@@ -1955,11 +2004,36 @@
     }
   }
 
+  // 다음 곡 준비: 곡이 재생을 시작하면 부름. 결과는 state.nextReady — ended 에서 playReady()가 기다림 없이 씀
+  const NEXT_GUESS = 600;   // 다음 곡 길이를 모르면 10분으로 침
   function prefetchNext() {
+    state.nextReady = null;
     const n = nextPos(false);
     if (n == null) return;
     const t = state.tracks[state.order[n]];
-    if (t && !state.blobUrls.has(t.id) && !fetching.has(t.id)) fetchTrackUrl(t).catch(() => {});
+    if (!t) return;
+    const ready = (url, stream) => {   // 그새 순서가 바뀌지 않았을 때만
+      const m = nextPos(false);
+      if (m === n && state.tracks[state.order[m]] === t) state.nextReady = { id: t.id, pos: n, url, stream };
+    };
+    if (state.blobUrls.has(t.id)) { ready(state.blobUrls.get(t.id), false); return; }
+    if (state.streamOff) {   // 통째 받기(대체됨): 예전처럼 미리 받아 둠
+      if (!fetching.has(t.id)) fetchTrackUrl(t, { whole: true }).then((u) => ready(u, false)).catch(() => {});
+      return;
+    }
+    // 바로 듣기: 열쇠가 "지금 곡 남은 시간 + 다음 곡 길이" 동안 버티는지
+    const d = el.audio.duration, c = el.audio.currentTime || 0;
+    const needMs = ((isFinite(d) && d > 0 ? d - c : NEXT_GUESS) + NEXT_GUESS) * 1000;
+    if (tokenValid()) ready(streamUrl(t.id), true);
+    // 모자라면 화면이 앞에 있을 때만 미리 새 열쇠를 받고 그 열쇠로 다시 만듦 (뒤에선 창이 막혀 억지로 안 받음)
+    if (tokenLeftMs() < needMs && document.visibilityState === "visible")
+      requestToken("").then(() => { if (tokenValid()) ready(streamUrl(t.id), true); }).catch(() => {});
+  }
+  // 섞기·반복·큐가 바뀌면: 준비해 둔 다음 곡은 버리고, 듣는 중이면 다시 만듦
+  function renewNext() {
+    state.nextReady = null;
+    const cur = currentTrack();
+    if (cur && state.audioFor === cur.id && el.audio.src) prefetchNext();
   }
 
   // ── 재생 제어 ──────────────────────────────────────────────
@@ -1978,12 +2052,16 @@
     markPlayingRow();
     el.npLoading.classList.remove("hidden");
     state.loadingId = t.id;
+    state.nextReady = null;   // 곡이 바뀌면 다음 곡은 재생이 시작된 뒤 다시 준비
+    state.wantPlay = true;
     if (state.retryId !== t.id) state.retryId = null;   // 다른 곡으로 가면 "다시 받기 한 번" 기회를 새로
     try {
       const url = await fetchTrackUrl(t);
       if (state.loadingId !== t.id) return; // 그새 다른 곡을 눌렀음
+      state.metaOk = null;
       el.audio.src = url;
       state.audioFor = t.id;   // 오디오에 걸린 주소가 어느 곡 것인지 (▶가 엉뚱한 곡을 다시 틀지 않게)
+      state.seekOnMeta = startAt || 0;   // 바로 듣기 주소는 길이를 알기 전엔 자리 옮기기가 안 먹을 수 있어 loadedmetadata 에서 한 번 더
       if (startAt) el.audio.currentTime = startAt;
       if (state.folder) store.set("last:" + state.folder.id, { id: t.id });
       saveQueue();
@@ -1998,17 +2076,56 @@
         throw e;
       }
       state.failRun = 0;
-      prefetchNext();
-      loadArt(t, url).then((art) => { if (art && currentTrack() === t) { showArt(art); updateMediaSession(t, art); } });
+      afterStart(t, url);
     } catch (e) {
       if (state.loadingId !== t.id) return;   // 그새 다른 곡으로 넘어감 (그 곡이 알아서 알림)
       if (e && e.name === "AbortError") return;   // 다음 곡을 거느라 이전 play()가 끊긴 것
       // 조용히 넘어가지 않고 이유를 쉬운 말로
       el.npSub.textContent = e && e.tokenFail ? "구글 연결이 끊겼어요 — ▶를 한 번 눌러 주세요" : "재생 실패: " + (e && e.message);
-      if (e && e.tokenFail) state.tokenLost = true;
+      if (e && e.tokenFail) { state.tokenLost = true; checkResume(); }   // 안내는 "이어 듣기" 단추 하나로
     } finally {
       if (state.loadingId === t.id) el.npLoading.classList.add("hidden");   // 실패해도 빙글이는 꼭 끔
     }
+  }
+
+  // 소리가 나기 시작한 뒤에 할 일 (다음 곡 준비·표지·대체됨 안내) — play() 앞에는 아무것도 끼지 않게
+  function afterStart(t, url) {
+    state.failRun = 0;
+    if (state.fallbackNote) { state.fallbackNote = false; el.npSub.textContent = FALLBACK_MSG; toast(FALLBACK_MSG); }
+    prefetchNext();
+    loadArt(t, url).then((art) => { if (art && currentTrack() === t) { showArt(art); updateMediaSession(t, art); } });
+  }
+
+  // 준비해 둔 다음 곡을 곧바로: el.audio.src 바꾸고 play() — 그 사이에 기다림(await)·받기(fetch) 없음
+  //  아이폰이 뒤에 있을 때 곡이 바뀌는 순간 소리가 비면 오디오를 거둬 가서, 빈틈을 없앰
+  //  준비된 게 없거나 다른 곡이면(섞기·큐를 바꿈) false → 부르는 쪽이 예전처럼 playCurrent()
+  function playReady() {
+    const r = state.nextReady;
+    const n = nextPos(state.repeat === "all");
+    const t = n == null ? null : state.tracks[state.order[n]];
+    if (!r || !t || r.id !== t.id || r.pos !== n) return false;
+    const url = r.stream ? (tokenValid() ? streamUrl(t.id) : r.url) : state.blobUrls.get(t.id);
+    if (!url || (!r.stream && url !== r.url)) return false;   // 받아둔 파일이 그새 지워짐
+    state.nextReady = null;
+    state.pos = n; state.loadingId = t.id; state.audioFor = t.id; state.wantPlay = true;
+    if (state.retryId !== t.id) state.retryId = null;
+    state.metaOk = null; state.seekOnMeta = 0;
+    el.audio.src = url;
+    const p = Promise.resolve(el.audio.play());
+    // 화면 갱신·기억·잠금화면 정보는 play()를 부른 다음에
+    el.npLoading.classList.add("hidden");
+    el.player.classList.add("show");
+    showNowPlaying(t);
+    markPlayingRow();
+    if (state.folder) store.set("last:" + state.folder.id, { id: t.id });
+    saveQueue();
+    updateMediaSession(t);
+    p.then(() => { if (state.loadingId === t.id) afterStart(t, url); }).catch((e) => {
+      if (state.loadingId !== t.id || (e && e.name === "AbortError")) return;
+      el.npSub.textContent = e && e.name === "NotAllowedError" ? "▶를 눌러 재생하세요" : "재생 실패: " + (e && e.message);
+      if (e && e.name === "NotAllowedError") checkResume();
+    });
+    return true;
   }
 
   function showNowPlaying(t) {
@@ -2094,7 +2211,8 @@
 
   function next() {
     const n = nextPos(state.repeat === "all");
-    if (n == null) { el.audio.pause(); return; }
+    if (n == null) { state.wantPlay = false; el.audio.pause(); return; }   // 큐 끝 — 다 들었음
+    if (playReady()) return;   // 준비해 둔 다음 곡이면 곧바로
     state.pos = n; playCurrent();
   }
   function prev() {
@@ -2103,21 +2221,39 @@
     state.pos = state.pos > 0 ? state.pos - 1 : state.order.length - 1;
     playCurrent();
   }
-  function togglePlay() {
+  // ▶/⏸ (하단 단추·스페이스). mode === "play" 면 멈추지는 않고 틀기만 (잠금화면 ▶·이어 듣기)
+  //  startAt: 새로 걸 때 그 초부터 (이어 듣기)
+  function togglePlay(mode, startAt) {
     state.failRun = 0;   // 손으로 눌렀으면 연속 실패 수를 처음부터
     const cur = currentTrack();
+    if (cur && state.audioFor === cur.id && el.audio.src && !el.audio.paused) {   // 소리 나는 중
+      if (mode !== "play") { state.wantPlay = false; el.audio.pause(); }   // 사람이 직접 멈춤
+      return;
+    }
+    // 바로 듣기 주소에 든 열쇠가 끝났거나 오디오가 망가졌으면 새 주소로 다시 걸어야 함
+    const stale = !!cur && state.audioFor === cur.id && (!!el.audio.error || (isStreamUrl(el.audio.src) && !tokenValid()));
     // 열쇠가 만료됐고 받아야 할 파일이 있으면, 누름 효력이 살아 있는 지금 곧바로 구글에 요청 (await 없이).
     //  받는 중(멈춘 요청)이 있어도 창을 한 번 더 띄우고, 답은 같은 약속으로 와서 기다리던 곳이 다 풀림
-    const needFile = !cur || !el.audio.src || state.audioFor !== cur.id;
+    const needFile = !cur || !el.audio.src || state.audioFor !== cur.id || stale;
     if (needFile && !tokenValid() && !(cur && state.blobUrls.has(cur.id))) {
       state.tokenLost = false;
       requestToken("", { again: true }).catch(() => {});
     }
     if (!cur) { if (state.tracks.length) playIndex(state.order[0]); return; }
-    if (needFile) { playCurrent(); return; }   // 걸린 주소가 없거나 다른 곡 것(앞 곡이 실패해 멈춘 경우) → 이 곡을 새로
-    if (el.audio.paused) el.audio.play().catch((e) => { el.npSub.textContent = "재생 실패: " + e.message; }); else el.audio.pause();
+    if (needFile) {   // 걸린 주소가 없거나 다른 곡 것(앞 곡이 실패해 멈춘 경우) → 이 곡을 새로
+      const at = startAt != null ? startAt : stale ? (el.audio.currentTime || 0) : state.audioFor !== cur.id ? resumeAtFor(cur) : 0;
+      if (at) playCurrent(at); else playCurrent();
+      return;
+    }
+    el.audio.play().catch((e) => { el.npSub.textContent = "재생 실패: " + e.message; });
+  }
+  // 다시 열었을 때 기억한 자리(dm:resume)가 이 곡 것이면 그 초
+  function resumeAtFor(t) {
+    const r = store.get("resume", null);
+    return r && r.id === t.id ? (Number(r.at) || 0) : 0;
   }
   function stopPlayback() {
+    state.wantPlay = false; state.nextReady = null; hideResume();
     state.audioFor = null; state.loadingId = null;
     el.audio.pause(); el.audio.removeAttribute("src"); el.audio.load();
     state.pos = -1; state.tracks = []; state.order = []; state.source = { type: "library" };
@@ -2129,6 +2265,7 @@
     store.set("shuffle", state.shuffle);
     el.btnShuffle.classList.toggle("active", state.shuffle);
     rebuildOrder();   // 끄면 원래 순서로 (지금 곡은 그대로)
+    renewNext();      // 다음 곡이 달라졌으니 다시 준비
     saveQueue();
     renderQueueSheet();
   }
@@ -2142,6 +2279,7 @@
     state.repeat = state.repeat === "off" ? "all" : state.repeat === "all" ? "one" : "off";
     store.set("repeat", state.repeat);
     applyRepeatUI();
+    renewNext();   // 전체 반복을 켜고 끄면 마지막 곡 다음이 달라짐
     renderQueueSheet();
   }
   function applyRepeatUI() {
@@ -2152,29 +2290,100 @@
   }
 
   // ── 잠금화면 / 이어폰 버튼 (Media Session) ──────────────────
+  // 곡 정보(제목·가수·앨범·그림)만 바꿈. 버튼 처리는 시작할 때 setupMediaSession() 한 번만
   function updateMediaSession(t, art = state.arts.get(t.id)) {
     if (!("mediaSession" in navigator)) return;
     const g = t.tags || {};
     const artwork = art ? [{ src: art, sizes: "512x512" }]
       : [{ src: new URL("icons/icon-512.png", location.href).href, sizes: "512x512", type: "image/png" }];
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: dispTitle(t), artist: g.artist || t.folderName || "", album: g.album || (state.folder && state.folder.name) || "", artwork,
-    });
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: dispTitle(t), artist: g.artist || t.folderName || "", album: g.album || (state.folder && state.folder.name) || "", artwork,
+      });
+    } catch {}
+  }
+  // 잠금화면·이어폰·CarPlay 버튼: ▶는 하단 ▶와 같은 길(togglePlay) — 걸린 주소가 없거나 열쇠가 끊겨도 그 곡을 다시 걸어 틂
+  function setupMediaSession() {
+    if (!("mediaSession" in navigator)) return;
     const set = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch {} };
-    set("play", () => el.audio.play());
-    set("pause", () => el.audio.pause());
+    set("play", () => togglePlay("play"));
+    set("pause", () => { state.wantPlay = false; el.audio.pause(); });   // 사람이 직접 멈춤
     set("previoustrack", prev);
     set("nexttrack", next);
-    set("seekto", (d) => { if (d.seekTime != null) el.audio.currentTime = d.seekTime; });
-    set("seekbackward", () => { el.audio.currentTime = Math.max(0, el.audio.currentTime - 10); });
-    set("seekforward", () => { el.audio.currentTime = Math.min(el.audio.duration || 0, el.audio.currentTime + 10); });
+    set("seekto", (d) => { if (d.seekTime != null) el.audio.currentTime = d.seekTime; syncPosition(); });
+    set("seekbackward", () => { el.audio.currentTime = Math.max(0, el.audio.currentTime - 10); syncPosition(); });
+    set("seekforward", () => { el.audio.currentTime = Math.min(el.audio.duration || 0, el.audio.currentTime + 10); syncPosition(); });
   }
+  // 잠금화면 진행 막대: 길이·위치 (지원 안 하면 넘김)
+  function syncPosition() {
+    if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState) return;
+    const d = el.audio.duration;
+    if (!isFinite(d) || d <= 0) return;
+    try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(el.audio.currentTime || 0, d), playbackRate: el.audio.playbackRate || 1 }); } catch {}
+  }
+  const setPlaybackState = (s) => { try { if ("mediaSession" in navigator) navigator.mediaSession.playbackState = s; } catch {} };
+
+  // ── 이어 듣기 (뒤에서 끊긴 채 앞으로 돌아왔을 때) ──────────────
+  //  듣는 자리를 몇 초마다·뒤로 갈 때 dm:resume 에 적음 (곡 ID + 초만, 주소는 안 적음)
+  let resumeSavedAt = 0;
+  function saveResume() {
+    const cur = currentTrack();
+    if (!cur || !state.folder || state.audioFor !== cur.id) return;
+    resumeSavedAt = Date.now();
+    store.set("resume", { folderId: state.folder.id, id: cur.id, at: Math.floor(el.audio.currentTime || 0), playing: state.wantPlay });
+  }
+  // 듣고 싶어 하는데 멈춰 있으면(또는 열쇠가 끊겼으면) 하단 플레이어에 "이어 듣기" 단추 하나
+  function checkResume() {
+    const cur = currentTrack();
+    const want = !!cur && el.player.classList.contains("show") && (state.tokenLost || (state.wantPlay && el.audio.paused));
+    el.btnResume.classList.toggle("hidden", !want);
+  }
+  const hideResume = () => el.btnResume.classList.add("hidden");
+  // 단추 누름 안에서 기다림 없이: 같은 곡 주소가 살아 있으면 play()만, 아니면 ▶와 같은 길로 저장한 초부터
+  function resumeNow() {
+    const cur = currentTrack();
+    if (!cur) { hideResume(); return; }
+    state.failRun = 0;
+    const alive = !!el.audio.src && state.audioFor === cur.id && !el.audio.error && !state.tokenLost
+      && !(isStreamUrl(el.audio.src) && !tokenValid());
+    if (alive) {
+      state.wantPlay = true;
+      el.audio.play().catch((e) => { el.npSub.textContent = "재생 실패: " + (e && e.message); checkResume(); });
+      return;
+    }
+    const at = state.audioFor === cur.id ? (el.audio.currentTime || resumeAtFor(cur)) : resumeAtFor(cur);
+    state.tokenLost = false;
+    togglePlay("play", at);   // 열쇠가 없으면 이 안에서 await 없이 구글에 요청 → playCurrent(at)
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") { saveResume(); return; }
+    checkResume();
+    scheduleTokenRefresh();   // 뒤에 있던 동안 못 받은 열쇠를 앞에서 다시
+    renewNext();              // 새 열쇠로 다음 곡 주소도
+  });
+  window.addEventListener("pageshow", checkResume);
+  window.addEventListener("pagehide", saveResume);
 
   // ── 오디오 이벤트 ──────────────────────────────────────────
-  el.audio.addEventListener("play", () => { el.icPlay.classList.add("hidden"); el.icPause.classList.remove("hidden"); });
-  el.audio.addEventListener("pause", () => { el.icPlay.classList.remove("hidden"); el.icPause.classList.add("hidden"); });
-  el.audio.addEventListener("ended", () => { if (state.repeat !== "one") next(); });
+  el.audio.addEventListener("play", () => { el.icPlay.classList.add("hidden"); el.icPause.classList.remove("hidden"); setPlaybackState("playing"); });
+  el.audio.addEventListener("pause", () => { el.icPlay.classList.remove("hidden"); el.icPause.classList.add("hidden"); setPlaybackState("paused"); saveResume(); });
+  el.audio.addEventListener("playing", () => { state.wantPlay = true; state.tokenLost = false; hideResume(); syncPosition(); });
+  el.audio.addEventListener("loadedmetadata", () => {
+    state.metaOk = el.audio.src;
+    if (isStreamUrl(el.audio.src)) state.streamWorked = true;   // 바로 듣기가 이 접속에선 됨
+    const at = state.seekOnMeta; state.seekOnMeta = 0;
+    if (at && Math.abs((el.audio.currentTime || 0) - at) > 1) el.audio.currentTime = at;   // 이어 듣기·다시 걸기 자리
+    syncPosition();
+  });
+  el.audio.addEventListener("seeked", syncPosition);
+  // 곡이 끝남: 준비해 둔 다음 곡이면 기다림 없이 곧바로(playReady), 아니면 예전처럼(next → playCurrent)
+  el.audio.addEventListener("ended", () => {
+    if (state.repeat === "one") return;   // 한 곡 반복은 el.audio.loop 가 알아서
+    if (playReady()) return;
+    next();
+  });
   el.audio.addEventListener("timeupdate", () => {
+    if (Date.now() - resumeSavedAt > 5000) saveResume();
     if (state.seeking) return;
     const d = el.audio.duration || 0, c = el.audio.currentTime || 0;
     el.tCur.textContent = fmtTime(c);
@@ -2191,7 +2400,19 @@
     if (!t || state.loadingId !== t.id) return;   // 멈춘 상태(stopPlayback)거나 그새 다른 곡을 받는 중
     const src = el.audio.getAttribute("src") || "";
     const code = el.audio.error ? el.audio.error.code : 0;   // 2 받기 문제, 3 풀기 실패, 4 형식·주소 문제
-    const lost = !src || state.audioFor !== t.id || state.blobUrls.get(t.id) !== src || code === 2;
+    const stream = isStreamUrl(src);
+    // 바로 듣기 주소로 시작도 못 함(loadedmetadata 전 오류) + 열쇠는 멀쩡 → 구글이 주소 속 열쇠를 안 받는 것.
+    //  이번 접속 동안 통째로 받기로 바꾸고(대체됨) 이 곡을 다시. 조용히 넘기지 않고 화면·console 에 표시 (주소는 안 적음)
+    //  (이번 접속에서 바로 듣기가 한 번이라도 됐으면 이 파일만의 문제 → 바꾸지 않고 아래 길로)
+    if (stream && state.metaOk !== src && tokenValid() && !state.streamOff && !state.streamWorked) {
+      state.streamOff = true; state.fallbackNote = true;
+      console.warn("[Drive Music] 바로 듣기 주소로 재생하지 못해 통째 받기로 바꿈 (대체됨) — 오류 코드", code);
+      el.npSub.textContent = FALLBACK_MSG;
+      playCurrent(el.audio.currentTime || 0);
+      return;
+    }
+    // 바로 듣기 주소면 듣는 중 오류(아이폰이 다시 받다 열쇠가 끝나 401 등)도 "주소를 잃음" — 새 열쇠로 그 자리부터 한 번
+    const lost = !src || state.audioFor !== t.id || (stream ? true : state.blobUrls.get(t.id) !== src) || code === 2;
     if (lost && state.retryId !== t.id) {
       state.retryId = t.id;
       const at = el.audio.currentTime || 0;
@@ -2267,6 +2488,11 @@
   el.libQ.addEventListener("input", renderLib);
   el.libQ.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { if (e.key === "Escape") { el.libQ.value = ""; renderLib(); } el.libQ.blur(); } });
   el.btnPlay.onclick = togglePlay;
+  el.btnResume.onclick = resumeNow;   // 이어 듣기
+  // 홈 화면 아이콘으로 연 앱(standalone)은 뒤에서 소리가 더 잘 끊김 → 곡 목록 위에 한 줄 안내 (✕로 닫으면 기억)
+  const standalone = navigator.standalone === true || (!!window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  el.standaloneNote.classList.toggle("hidden", !standalone || !!store.get("standalonenote", false));
+  el.standaloneNoteX.onclick = () => { el.standaloneNote.classList.add("hidden"); store.set("standalonenote", true); };
   el.btnNext.onclick = next;
   el.btnPrev.onclick = prev;
   el.btnShuffle.onclick = toggleShuffle;
@@ -2353,9 +2579,11 @@
     if (lv && (lv.kind === "songs" || KINDS[lv.kind])) state.libView = { kind: lv.kind, group: lv.group == null ? null : String(lv.group) };
     el.btnShuffle.classList.toggle("active", state.shuffle);
     applyRepeatUI();
+    setupMediaSession();   // 잠금화면 버튼은 여기서 한 번만
 
     try { state.token = JSON.parse(sessionStorage.getItem("dm:token") || "null"); } catch {}
     if (tokenValid()) {
+      scheduleTokenRefresh();
       // 같은 탭에서 새로고침한 경우 — 로그인 창 없이 바로 이어감
       const tick = setInterval(() => { if (ensureTokenClient()) { clearInterval(tick); afterLogin().catch((e) => { show(el.sLogin); notice(e.message); }); } }, 100);
       setTimeout(() => clearInterval(tick), 8000);

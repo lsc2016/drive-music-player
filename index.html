@@ -119,6 +119,22 @@
       transform: translateY(110%); transition: transform .25s ease;
     }
     #player.show { transform: none; }
+    /* 이어 듣기: 하단 플레이어 맨 위 한 줄 (플레이어가 이미 --safe-b 만큼 띄워져 있음) */
+    .resumebar {
+      display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
+      margin: 0 0 10px; padding: 10px 14px; border: 0; border-radius: 12px;
+      background: var(--accent); color: #06130a; font: inherit; font-weight: 700; cursor: pointer;
+    }
+    .resumebar svg { width: 18px; height: 18px; fill: currentColor; }
+    .resumebar.hidden { display: none; }
+    /* 홈 화면 앱 안내 한 줄 */
+    .appnote {
+      display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 10px 8px 12px;
+      background: var(--panel-2); border-radius: 10px; color: var(--muted); font-size: 12.5px;
+    }
+    .appnote span { flex: 1; min-width: 0; }
+    .appnote button { flex: none; border: 0; background: transparent; color: var(--muted); font-size: 15px; padding: 2px 6px; cursor: pointer; }
+    .appnote.hidden { display: none; }
     .np { display: flex; align-items: center; gap: 12px; }
     .np .art {
       width: 46px; height: 46px; border-radius: 10px; flex: none;
@@ -332,6 +348,11 @@
 
   <!-- 3) 재생목록 -->
   <section class="screen" id="s-tracks">
+    <!-- 홈 화면 아이콘으로 열었을 때만: 뒤에서 끊기면 사파리 탭으로 (✕ 로 닫으면 다시 안 보임) -->
+    <div class="appnote hidden" id="standalone-note">
+      <span>뒤에서 듣다 끊기면 사파리 탭으로 열어 보세요</span>
+      <button id="standalone-note-x" title="닫기">✕</button>
+    </div>
     <!-- 유일한 메뉴: 보관함 분류 칩 | 플레이리스트 칩 (좁으면 옆으로 밀기) -->
     <div class="kinds" id="lib-kinds">
       <button class="on" data-kind="songs">곡</button>
@@ -428,6 +449,8 @@
 
 <!-- 하단 플레이어 -->
 <div id="player">
+  <!-- 뒤에서 듣다 멈춘 채 돌아오면: 누르면 그 자리부터 (열쇠가 끊겼을 때 안내도 이 단추 하나) -->
+  <button class="resumebar hidden" id="btn-resume"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>이어 듣기</button>
   <div class="np">
     <div class="art" id="np-art">
       <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
