@@ -101,6 +101,26 @@ checks = [
      and re.search(r"el\.msheetX\.onclick\s*=\s*closeMSheet\b", app) is not None
      and 'sheetX: $("sheet-x")' in app and 'msheetX: $("msheet-x")' in app),
     ("3. Esc 키: 시트가 열려 있으면 closeSheet()·closeMSheet()", "closeSheet()" in esc and "closeMSheet()" in esc),
+    # 받은 곡 화면 #s-dl · 오프라인 목록 (2026-11-12)
+    ("1·2. #s-dl(받은 곡) 화면이 있고 header 밖(로고가 늘 보임)",
+     re.search(r'<section class="screen" id="s-dl">', html) is not None and 'id="s-dl"' not in header
+     and 'sDl: $("s-dl")' in app and "el.sDl" in show),
+    ("2. show(): #s-dl 도 하위 화면(sub) → ← 보임, ⚙ 숨김",
+     re.search(r"const sub = [^;]*screen === el\.sDl", show) is not None),
+    ("2. #s-dl 주소 #dl (SCREEN_HASH)", '[el.sDl, "#dl"]' in screen_hash),
+    ("2. ← 누르면 #s-dl → closeDlScreen, 브라우저 뒤로가기(popstate)도 closeDlScreen",
+     re.search(r"el\.sDl\.classList\.contains\(\"show\"\)\) closeDlScreen\(\)", back_click) is not None
+     and re.search(r"el\.sDl\.classList\.contains\(\"show\"\)\) closeDlScreen\(\)", pop) is not None),
+    ("1. 로고: #s-dl → closeDlScreen (곡 목록·오프라인 목록으로)",
+     re.search(r"el\.sDl\.classList\.contains\(\"show\"\)\) return closeDlScreen\(\)", home) is not None),
+    ("2. closeDlScreen: 곡 목록(폴더 또는 오프라인 목록) → show(el.sTracks), 없으면 폴더 고르기·로그인",
+     "show(el.sTracks)" in func_body(app, "closeDlScreen") and "state.offline" in func_body(app, "closeDlScreen")
+     and "showFolderPicker()" in func_body(app, "closeDlScreen") and "show(el.sLogin)" in func_body(app, "closeDlScreen")),
+    ("1. 오프라인 목록(state.folder 없음)에서 로고 → 그 목록 맨 위 (폴더 없다고 막히지 않음)",
+     0 <= home.find('el.sTracks.classList.contains("show")) { mainEl.scrollTop = 0; return; }') < home.find("!state.folder")
+     and "!state.offline" in home),
+    ("1·2. 오프라인 목록은 #s-tracks 그대로 (첫 화면, 해시 없음 → 뒤로가기로 앱을 떠나지 않게 하위 화면만 해시)",
+     "show(el.sTracks)" in func_body(app, "startOffline") and "[el.sTracks," not in screen_hash),
     ("3. 바깥 누르기(el.dim)는 그대로", re.search(r"el\.dim\.onclick = \(\) => \{ closeSheet\(\); closeMSheet\(\); \}", app) is not None),
     ("3. ✕ 자리 CSS (.sheet-x 오른쪽 위)", re.search(r"\.sheet-x \{[^}]*position: absolute;[^}]*right:", html) is not None),
 ]
@@ -110,5 +130,5 @@ for name, ok in checks:
     print(("통과  " if ok else "실패  ") + name)
     fail += not ok
 print(f"\n{len(checks) - fail}/{len(checks)} 통과")
-print("※ 모든 화면(로그인·폴더 고르기·곡 목록·플레이리스트·태그 목록 편집)에서 실제로 눌러 보는 건 사람 몫")
+print("※ 모든 화면(로그인·폴더 고르기·곡 목록·플레이리스트·태그 목록 편집·받은 곡·오프라인 목록)에서 실제로 눌러 보는 건 사람 몫")
 sys.exit(1 if fail else 0)

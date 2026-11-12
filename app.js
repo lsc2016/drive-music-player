@@ -24,7 +24,11 @@
   const el = {
     hdrSub: $("hdr-sub"),
     btnHome: $("btn-home"), btnBack: $("btn-back"), btnSettings: $("btn-settings"),
-    sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"), sTags: $("s-tags"),
+    sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"), sTags: $("s-tags"), sDl: $("s-dl"),
+    dlProgress: $("dl-progress"), dlCount: $("dl-count"), dlInfo: $("dl-info"), dlGone: $("dl-gone"), dlGoneText: $("dl-gone-text"),
+    btnDlRegain: $("btn-dl-regain"), btnDlForget: $("btn-dl-forget"), btnDlPlay: $("btn-dl-play"), btnDlShuffle: $("btn-dl-shuffle"),
+    dlList: $("dl-list"), dlEmpty: $("dl-empty"), btnDlClear: $("btn-dl-clear"), btnLibDl: $("btn-lib-dl"), btnPlDl: $("btn-pl-dl"),
+    offlineNote: $("offline-note"), offlineText: $("offline-text"), btnOfflineLogin: $("btn-offline-login"), btnLoginDl: $("btn-login-dl"),
     tagKinds: $("tag-kinds"), tagsQ: $("tags-q"), tagList: $("tag-list"), tagsCount: $("tags-count"),
     viewLib: $("view-lib"), viewPl: $("view-pl"),
     plList: $("pl-list"), plEmpty: $("pl-empty"), plSync: $("pl-sync"), plNewName: $("pl-new-name"), btnPlNew: $("btn-pl-new"),
@@ -103,6 +107,16 @@
     streamWorked: false,  // 이번 접속에서 바로 듣기 주소가 한 번이라도 재생됐음
     seekOnMeta: 0,        // 길이를 안 뒤(loadedmetadata) 옮길 자리(초)
     wantPlay: false,      // 사람이 듣고 싶어 하는 중 (직접 멈추면 끔, 전화·iOS가 멈춘 건 그대로)
+    // 받아 두기 (폰에 받아 두고 인터넷 없이) — blobUrls(대체·통째 받기)와 섞지 않음: trimBlobs·setLibrary·refreshLibrary가 안 지움
+    dlUrls: new Map(),    // trackId -> 받은 곡 blob: 주소 (IndexedDB 조각으로 만든 것)
+    dlMeta: new Map(),    // trackId -> { id, name, size, mimeType, folderName, folderId, got, parts, done, at, tags }
+    dlQueue: [],          // 받을 차례 (곡 ID만, localStorage "dm:dlqueue")
+    dlOk: null,           // IndexedDB를 쓸 수 있음 (null 아직 모름 / false 못 씀 → 받기 단추 끔)
+    dlPersisted: null,    // navigator.storage.persisted() 결과 (true = 브라우저가 함부로 안 지움)
+    dlGone: [],           // 받았었는데 저장소에서 없어진 곡 ID
+    dlGoneNote: null,     // 받은 곡이 지워져 드라이브에서 트는 곡 (재생이 시작되면 안내)
+    offline: false,       // 받은 곡만 보이는 오프라인 목록 중
+    onlineLib: null,      // 쓰다가 인터넷이 끊겼을 때 감춰 둔 원래 곡 목록 (돌아오면 되돌림)
   };
 
   const store = {
@@ -143,9 +157,9 @@
   };
   const isAudioName = (n) => AUDIO_EXT.includes((n.split(".").pop() || "").toLowerCase());
   const show = (screen) => {
-    for (const s of [el.sLogin, el.sFolder, el.sTracks, el.sPl, el.sTags]) s.classList.toggle("show", s === screen);
+    for (const s of [el.sLogin, el.sFolder, el.sTracks, el.sPl, el.sTags, el.sDl]) s.classList.toggle("show", s === screen);
     const signedIn = screen !== el.sLogin;
-    const sub = screen === el.sPl || screen === el.sTags;   // 뒤로 버튼이 있는 하위 화면
+    const sub = screen === el.sPl || screen === el.sTags || screen === el.sDl;   // 뒤로 버튼이 있는 하위 화면
     // ← 뒤로: 하위 화면 + 폴더 고르기(돌아갈 폴더가 있을 때만)
     el.btnBack.classList.toggle("hidden", !(sub || (screen === el.sFolder && state.folder)));
     el.btnSettings.classList.toggle("hidden", !signedIn || sub);
@@ -155,7 +169,7 @@
   // 주소 뒤 #표시: 화면을 바꾸면 주소도 바뀜 → 브라우저·홈 화면 앱의 뒤로가기가 ← 와 같은 곳(곡 목록)으로 감
   //  경로는 그대로 두고 해시만 바꿈 (GitHub Pages 하위 경로에서도 안 깨지게). 첫 화면(곡 목록)·로그인은 해시 없음
   //  우리가 넣은 칸은 하나뿐: 하위 화면끼리 옮기면 갈아 끼우고(replace), 첫 화면으로 돌아올 땐 그 칸을 뒤로(back)
-  const SCREEN_HASH = new Map([[el.sFolder, "#folder"], [el.sPl, "#pl"], [el.sTags, "#tags"]]);
+  const SCREEN_HASH = new Map([[el.sFolder, "#folder"], [el.sPl, "#pl"], [el.sTags, "#tags"], [el.sDl, "#dl"]]);
   let skipPop = 0, fromPop = false;   // 우리가 부른 history.back()의 popstate는 무시 / popstate가 바꾼 화면은 주소를 다시 안 건드림
   const plainUrl = () => location.pathname + location.search;
   function syncHash(screen) {
@@ -182,6 +196,13 @@
     el.toast.classList.add("show");
     clearTimeout(toastTimer); toastTimer = setTimeout(() => el.toast.classList.remove("show"), action ? 5000 : 1800);
   };
+  // 오프라인 목록에선 드라이브에 쓰는 일(태그 고치기·플레이리스트 고치기)을 막음 — 나중에 올리면 드라이브 것과 엇갈려서
+  const OFFLINE_NO_EDIT = "인터넷이 없어 지금은 못 고쳐요 — 받은 곡 듣기만 돼요";
+  function offlineBlock() {
+    if (!state.offline) return false;
+    toast(OFFLINE_NO_EDIT);
+    return true;
+  }
   const notice = (msg, ok = false) => {
     el.loginNotice.textContent = msg;
     el.loginNotice.classList.toggle("ok", ok);
@@ -293,11 +314,14 @@
     for (const k of store.get("libkeys", [])) store.del("lib:" + k);
     store.del("libkeys");
     store.del("folder"); store.del("queue"); state.folder = null;   // 다음 로그인은 기본 폴더(Music) 찾기부터
+    // 받은 곡(IndexedDB·dm:dl)은 남김 — 로그인 없이·인터넷 없이 계속 들을 수 있게 (확인 창 부제에 적어 둠)
     show(el.sLogin);
     notice("로그아웃했어요.", true);
+    paintLoginDl();
   }
 
   async function afterLogin() {
+    loadDl().then(pumpDl);   // 받다 만 곡이 있으면 이어 받기 (열쇠가 생겼으니)
     loadPlaylists().catch((e) => { el.plSync.textContent = "불러오기 실패"; console.warn(e); });
     const saved = store.get("folder", null);
     if (saved && saved.id) await openFolder(saved);
@@ -565,7 +589,7 @@
       state.pos = -1;   // (옛 순서로 새 목록을 보면 엉뚱한 곡이 "지금 곡"이 됨)
       rebuildOrder();
       // 듣던 곡이 있으면 그 자리로, 없으면 지난번 듣던 곡 자리로 (자동 재생은 안 함 — 폰 브라우저가 막음)
-      const last = cur || store.get("last:" + state.folder.id, null);
+      const last = cur || (state.folder && store.get("last:" + state.folder.id, null));   // 오프라인 목록엔 폴더가 없음
       if (last && tracks.length) {
         const i = tracks.findIndex((t) => t.id === last.id);
         if (i >= 0) { state.pos = state.order.indexOf(i); showNowPlaying(tracks[i]); el.player.classList.add("show"); }
@@ -625,9 +649,10 @@
     b.dataset.id = t.id;
     b.innerHTML = `<span class="num">${i + 1}</span>
       <div class="ic">${SVG_NOTE}</div>
-      <button class="t" style="text-align:left;flex:1;min-width:0;padding:0"><div class="n"></div><div class="s"></div></button>`;
+      <button class="t" style="text-align:left;flex:1;min-width:0;padding:0"><div class="n"></div><div class="s"></div></button><span class="dlmark"></span>`;
     b.querySelector(".n").textContent = dispTitle(t);
     b.querySelector(".s").textContent = sub;
+    b.querySelector(".dlmark").textContent = dlMark(t.id);   // 받은 곡 ↓ / 받는 중 %
     b.querySelector(".t").onclick = onPlay;
     if (onAdd) {
       const a = document.createElement("button");
@@ -653,7 +678,7 @@
     state.library.forEach((t, i) => {
       if (q && !matchTrack(t, q)) return;
       shown++;
-      if (CFG.INCLUDE_SUBFOLDERS && t.folderName !== lastFolder && t.folderName !== state.folder.name) {
+      if (CFG.INCLUDE_SUBFOLDERS && t.folderName !== lastFolder && (!state.folder || t.folderName !== state.folder.name)) {
         const h = document.createElement("div");
         h.className = "sectionhead"; h.style.marginTop = "14px";
         h.innerHTML = `<h2 style="font-size:13px;color:var(--muted)"></h2>`;
@@ -842,6 +867,7 @@
     });
     el.tracksCount.textContent = q ? `${shown} / ${g.tracks.length}곡` : `${g.tracks.length}곡`;
     el.searchEmpty.classList.toggle("hidden", !(q && !shown));
+    paintDlChip(el.btnLibDl, g.tracks);   // [↓ 받기] — 이 묶음에서 아직 안 받은 곡만 줄에
   }
 
   // 지금 보이는 목록 = 재생할 곡들과 출처 이름 (곡 / 이름 목록 / 묶음 안, 검색으로 걸렀으면 그 결과만)
@@ -876,6 +902,7 @@
     if (el.libPlaybar.nextElementSibling !== anchor) anchor.before(el.libPlaybar);
     const none = !state.library.length;
     el.btnLibPlay.disabled = el.btnLibShuffle.disabled = none;
+    el.btnLibDl.classList.toggle("hidden", songs || state.libView.group == null);   // [↓ 받기]는 묶음 안에서만
   }
 
   // 묶음을 재생 큐로 — i가 없으면 처음부터(섞기면 섞인 첫 곡)
@@ -895,9 +922,9 @@
     for (const t of state.library) {
       const e = state.tagDb.get(t.id);
       if (e && !LANGS.includes(e.tags.language)) { e.tags.language = detectLang(e.tags.title, e.tags.artist); filled++; }
-      t.tags = e ? e.tags : { ...fallbackTags(t), hasArt: null };
+      t.tags = e ? e.tags : t.keepTags && t.tags ? t.tags : { ...fallbackTags(t), hasArt: null };   // keepTags: 받은 곡의 태그 사본
     }
-    if (filled) saveLibrary();   // 언어를 새로 채웠으면 보관함 파일에도 적어둠
+    if (filled && !state.offline) saveLibrary();   // 언어를 새로 채웠으면 보관함 파일에도 적어둠 (오프라인이면 안 올림)
   }
   // 고칠 곡의 보관함 칸 (아직 태그를 못 읽은 곡이면 지금 값으로 만듦)
   function ensureEntry(t) {
@@ -926,6 +953,7 @@
   // 되돌리기: 고치기 직전 보관함 내용을 이 기기에 한 벌 (마지막 한 번만)
   function rememberUndo(label) { store.set("libundo", { text: serializeLibrary(), label, at: Date.now() }); }
   function undoLast() {
+    if (offlineBlock()) return;
     const u = store.get("libundo", null);
     if (!u) { toast("되돌릴 변경이 없어요"); return; }
     state.tagDb = parseLibrary(u.text);
@@ -1003,6 +1031,7 @@
 
   // 합치기 창: 남길 이름을 체크한 것 중에서 고르거나 새로 적기
   function openMerge(groups, defaultKey) {
+    if (offlineBlock()) return;
     const kind = groups[0].kind, k = KINDS[kind];
     const total = groups.reduce((n, g) => n + g.tracks.length, 0);
     let choice = defaultKey != null ? defaultKey : groups[0].key;
@@ -1043,6 +1072,7 @@
 
   // 이름 바꾸기 (그 묶음 전체 곡)
   function openRename(g) {
+    if (offlineBlock()) return;
     const kind = g.kind, k = KINDS[kind];
     fillDatalists();
     const body = kind === "language"
@@ -1067,8 +1097,16 @@
   function openTrackMenu(t) {
     const body = document.createElement("div");
     body.style.cssText = "display:flex;flex-direction:column;gap:6px";
-    body.appendChild(menuRow("태그 편집", "제목·아티스트·앨범 등 (음악 파일은 그대로)", () => openTagForm(t)));
-    body.appendChild(menuRow("플레이리스트에 담기", "", () => { closeMSheet(); openSheet(t); }));
+    body.appendChild(menuRow("태그 편집", state.offline ? OFFLINE_NO_EDIT : "제목·아티스트·앨범 등 (음악 파일은 그대로)", () => openTagForm(t), state.offline));
+    body.appendChild(menuRow("플레이리스트에 담기", "", () => { closeMSheet(); openSheet(t); }, state.offline));
+    // 받기 / 받기 멈추기 / 받은 곡 지우기 — 셋 중 하나
+    const m = state.dlMeta.get(t.id);
+    if (isDl(t.id)) body.appendChild(menuRow("받은 곡 지우기", `이 기기에서만 지워요 (${fmtSize(m.got)}) · 드라이브 파일은 그대로`,
+      () => { closeMSheet(); dlRemove([t.id]).then(() => toast("받은 곡에서 지웠어요")); }));
+    else if (state.dlQueue.includes(t.id)) body.appendChild(menuRow("받기 멈추고 빼기", `받는 중 ${dlMark(t.id)}`,
+      () => { closeMSheet(); dlRemove([t.id]).then(() => toast("받기 줄에서 뺐어요")); }));
+    else body.appendChild(menuRow("↓ 받기", state.dlOk === false ? DL_NO : `폰에 받아 두고 인터넷 없이 듣기${Number(t.size) ? " · " + fmtSize(t.size) : ""}`,
+      () => { closeMSheet(); enqueueDl([t]); }, state.dlOk === false || state.offline));
     openMSheet({ title: dispTitle(t), sub: tagSub(t) || t.name, body });
   }
 
@@ -1079,6 +1117,7 @@
     ["track", "트랙", null, "numeric"], ["year", "연도", null, "numeric"],
   ];
   function openTagForm(t) {
+    if (offlineBlock()) return;
     fillDatalists();
     const g = t.tags || fallbackTags(t);
     const body = document.createElement("div");
@@ -1137,15 +1176,17 @@
 
   // 상단 ⚙ 설정 메뉴: 폴더 바꾸기, 새로고침, 태그 전부 다시 읽기, 로그아웃(한 번 더 물어봄)
   function openSettingsMenu() {
-    const onTracks = el.sTracks.classList.contains("show") && !!state.folder;   // 새로고침 두 줄은 곡 목록 화면에서만
+    const onTracks = el.sTracks.classList.contains("show") && !!state.folder && !state.offline;   // 새로고침 두 줄은 곡 목록 화면에서만
     const body = document.createElement("div");
     body.style.cssText = "display:flex;flex-direction:column;gap:6px";
-    body.appendChild(menuRow("폴더 바꾸기", state.folder ? `지금: ${state.folder.name}` : "음악 폴더 고르기", () => { closeMSheet(); showFolderPicker(); }));
+    body.appendChild(menuRow("폴더 바꾸기", state.offline ? "인터넷이 있을 때" : state.folder ? `지금: ${state.folder.name}` : "음악 폴더 고르기", () => { closeMSheet(); showFolderPicker(); }, state.offline));
     body.appendChild(menuRow("새로고침", "드라이브에 새로 올린 곡 반영", () => { closeMSheet(); if (state.folder) openFolder(state.folder); }, !onTracks));
     body.appendChild(menuRow("태그 전부 다시 읽기", "곡 정보를 파일에서 처음부터 다시 읽기", () => { closeMSheet(); retagAll(); }, !onTracks));
+    // 받은 곡: N곡 · 1.2 GB · 안 지워짐(persisted) — 로그인 전·오프라인에서도 들어감
+    body.appendChild(menuRow("받은 곡", dlMenuSub(), () => { closeMSheet(); openDlScreen(); }));
     const gap = document.createElement("div"); gap.style.height = "8px";
     body.appendChild(gap);
-    body.appendChild(menuRow("로그아웃", "누르면 한 번 더 물어봐요", confirmLogout, false, true));
+    body.appendChild(menuRow("로그아웃", "누르면 한 번 더 물어봐요", confirmLogout, state.offline, true));
     openMSheet({ title: "설정", body });
   }
 
@@ -1154,7 +1195,7 @@
     const body = document.createElement("div");
     openMSheet({
       title: "로그아웃할까요?",
-      sub: "받아둔 목록·기억한 폴더가 지워져요",
+      sub: "받아둔 목록·기억한 폴더가 지워져요 (받은 곡은 이 기기에 남아요)",
       body,
       ok: { label: "로그아웃", danger: true, fn: () => { logout(); } },
     });
@@ -1162,7 +1203,7 @@
 
   // 태그 전부 다시 읽기 — 앱에서 고친 곡이 있으면 버릴지 물어봄
   function retagAll() {
-    if (!state.folder) return;
+    if (offlineBlock() || !state.folder) return;
     const nEdited = state.library.filter((t) => { const e = state.tagDb.get(t.id); return e && e.edited; }).length;
     let dropEdits = false;
     if (nEdited) dropEdits = confirm(`앱에서 고친 곡이 ${nEdited}곡 있어요. 고친 태그도 버릴까요?\n\n확인 = 고친 것도 버리고 파일의 원래 태그로\n취소 = 고친 곡은 그대로 두고 나머지만 다시 읽기`);
@@ -1176,6 +1217,7 @@
   //  끌기는 마우스·손가락 둘 다 되게 pointer 이벤트로 직접 (HTML5 drag는 폰에서 안 됨)
   const SVG_GRIP = `<svg viewBox="0 0 24 24"><path d="M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z"/></svg>`;
   function openTagEditor() {
+    if (offlineBlock()) return;
     state.tagEdKind = store.get("tagedkind", "artist");
     if (!KINDS[state.tagEdKind]) state.tagEdKind = "artist";
     el.tagsQ.value = "";
@@ -1258,6 +1300,7 @@
 
   // 끌어 포갠 두 값 합치기 확인: 어느 이름을 남길지 고르면 몇 곡이 바뀌는지 보여줌
   function openDropMerge(src, dst) {
+    if (offlineBlock()) return;
     const kind = src.kind, k = KINDS[kind];
     let keep = dst;   // 기본은 놓은 곳(아래 줄)의 이름
     const body = document.createElement("div");
@@ -1510,6 +1553,7 @@
   // ── 플레이리스트: 고치기 ────────────────────────────────────
   const getPl = (name) => state.playlists.find((p) => p.name === name);
   function createPlaylist(name) {
+    if (offlineBlock()) return null;
     name = (name || "").trim();
     if (!name) return null;
     if (getPl(name)) { toast("같은 이름이 이미 있어요"); return getPl(name); }
@@ -1519,6 +1563,7 @@
     return p;
   }
   function addToPlaylist(name, t) {
+    if (offlineBlock()) return;
     const p = getPl(name) || createPlaylist(name);
     if (!p) return;
     if (p.items.some((it) => it.id === t.id)) return;
@@ -1526,16 +1571,18 @@
     savePlaylists();
   }
   function removeFromPlaylist(name, id) {
+    if (offlineBlock()) return;
     const p = getPl(name); if (!p) return;
     p.items = p.items.filter((it) => it.id !== id);
     savePlaylists();
   }
   const inPlaylist = (name, id) => { const p = getPl(name); return !!p && p.items.some((it) => it.id === id); };
 
-  // 플레이리스트 항목 → 재생할 곡 (라이브러리에 있으면 그 정보를, 없으면 저장된 정보로)
-  const plItemsToTracks = (p) => p.items.map((it) => state.library.find((t) => t.id === it.id) ||
+  // 플레이리스트 항목 → 재생할 곡 (라이브러리에 있으면 그 정보를, 받은 곡이면 그 정보를, 없으면 저장된 정보로)
+  //  오프라인 목록에선 받은 곡만 남김
+  const plItemsToTracks = (p) => p.items.map((it) => state.library.find((t) => t.id === it.id) || dlTrackOf(it.id) ||
     ({ id: it.id, name: it.title, title: it.title, size: 0, mimeType: "audio/", folderName: it.folderName,
-       tags: (state.tagDb.get(it.id) || {}).tags }));
+       tags: (state.tagDb.get(it.id) || {}).tags })).filter((t) => !state.offline || isDl(t.id));
 
   // ── 플레이리스트: 목록 화면(탭) ─────────────────────────────
   const SVG_PL = `<svg viewBox="0 0 24 24"><path d="M3 10h11v2H3v-2zm0-4h11v2H3V6zm0 8h7v2H3v-2zm12-2v8l6-4-6-4z"/></svg>`;
@@ -1550,7 +1597,7 @@
       b.innerHTML = `<div class="ic ${isFav ? "fav" : "pl"}">${isFav ? SVG_HEART : SVG_PL}</div>
         <div class="t"><div class="n"></div><div class="s"></div></div>`;
       b.querySelector(".n").textContent = p.name;
-      b.querySelector(".s").textContent = `${p.items.length}곡` + (state.source.type === "playlist" && state.source.name === p.name ? " · 재생 중" : "");
+      b.querySelector(".s").textContent = `${state.offline ? plItemsToTracks(p).length : p.items.length}곡` + (state.offline ? " 받음" : "") + (state.source.type === "playlist" && state.source.name === p.name ? " · 재생 중" : "");
       b.onclick = () => openPlaylist(p.name);
       el.plList.appendChild(b);
     }
@@ -1566,7 +1613,7 @@
   function closePlaylist() {
     state.openPl = null; state.plEditing = false;
     show(el.sTracks);
-    el.hdrSub.textContent = state.folder ? state.folder.name : "";
+    el.hdrSub.textContent = state.folder ? state.folder.name : state.offline ? "받은 곡" : "";
     showTab("pl");
   }
   const SVG_UP = `<svg viewBox="0 0 24 24"><path d="m7.41 15.41 4.59-4.58 4.59 4.58L18 14l-6-6-6 6z"/></svg>`;
@@ -1575,19 +1622,21 @@
   function renderPlaylistDetail() {
     const p = getPl(state.openPl);
     if (!p) { closePlaylist(); return; }
+    if (state.offline) state.plEditing = false;   // 오프라인: 순서 바꾸기·빼기 안 됨
+    const tracks = plItemsToTracks(p);
     el.plTitle.textContent = p.name;
-    el.plCount.textContent = p.items.length ? `${p.items.length}곡` : "";
-    el.plTracksEmpty.classList.toggle("hidden", p.items.length > 0);
+    el.plCount.textContent = tracks.length ? `${tracks.length}곡${state.offline ? " 받음" : ""}` : "";
+    el.plTracksEmpty.classList.toggle("hidden", tracks.length > 0);
+    paintDlChip(el.btnPlDl, tracks);   // [↓ 받기] — 이 플레이리스트에서 아직 안 받은 곡만 줄에
     el.sPl.classList.toggle("editing", state.plEditing);
     el.btnPlEdit.classList.toggle("on", state.plEditing);
     el.btnPlEdit.lastChild.textContent = state.plEditing ? "완료" : "편집";
     el.btnPlRename.classList.toggle("hidden", !state.plEditing);
     el.btnPlDelete.classList.toggle("hidden", !state.plEditing);
-    el.btnPlPlay.disabled = el.btnPlShuffle.disabled = !p.items.length;
+    el.btnPlPlay.disabled = el.btnPlShuffle.disabled = !tracks.length;
 
     el.plTracks.innerHTML = "";
     const cur = currentTrack();
-    const tracks = plItemsToTracks(p);
     tracks.forEach((t, i) => {
       const inLib = state.library.some((x) => x.id === t.id);
       const row = trackRow(t, i, {
@@ -1607,12 +1656,14 @@
   }
   function playPlaylist(shuffle) {
     const p = getPl(state.openPl);
-    if (!p || !p.items.length) return;
+    const tracks = p ? plItemsToTracks(p) : [];
+    if (!tracks.length) return;
     setShuffle(shuffle);
-    setQueue({ type: "playlist", name: p.name }, plItemsToTracks(p));
+    setQueue({ type: "playlist", name: p.name }, tracks);
     state.pos = 0; playCurrent();
   }
   function renamePlaylist() {
+    if (offlineBlock()) return;
     const p = getPl(state.openPl); if (!p) return;
     const name = (prompt("새 이름", p.name) || "").trim();
     if (!name || name === p.name) return;
@@ -1622,6 +1673,7 @@
     savePlaylists(); renderPlaylistDetail();
   }
   function deletePlaylist() {
+    if (offlineBlock()) return;
     const p = getPl(state.openPl); if (!p) return;
     if (!confirm(`"${p.name}" 플레이리스트를 지울까요? (곡 파일은 그대로 남아요)`)) return;
     state.playlists = state.playlists.filter((x) => x !== p);
@@ -1632,6 +1684,7 @@
   // ── 플레이리스트에 담기 (바텀시트) ──────────────────────────
   const SVG_CHECK = `<svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
   function openSheet(t) {
+    if (offlineBlock()) return;
     state.sheetTrack = t;
     el.sheetTrack.textContent = dispTitle(t);
     renderSheet();
@@ -1657,6 +1710,7 @@
 
   // ── ♥ 즐겨찾기 ────────────────────────────────────────────
   function toggleFav() {
+    if (offlineBlock()) return;
     const t = currentTrack(); if (!t) return;
     if (inPlaylist(FAV, t.id)) { removeFromPlaylist(FAV, t.id); toast("즐겨찾기에서 뺐어요"); }
     else { addToPlaylist(FAV, t); toast("즐겨찾기에 담았어요"); }
@@ -1941,7 +1995,9 @@
     if (!window.jsmediatags || (t.tags && t.tags.hasArt === false)) return null;
     if (state.arts.has(t.id)) return state.arts.get(t.id);
     try {
-      const blob = String(url || "").startsWith("blob:") ? await (await fetch(url)).blob() : ((await tagBlobOf(t)) || {}).blob;
+      // 받은 곡이면 이 기기에 있는 그 Blob에서 (인터넷 없이), 통째로 받아둔 파일이면 그걸, 아니면 Range로 앞부분만
+      const local = isDl(t.id) && state.dlUrls.has(t.id) ? state.dlUrls.get(t.id) : String(url || "").startsWith("blob:") ? url : "";
+      const blob = local ? await (await fetch(local)).blob() : ((await tagBlobOf(t)) || {}).blob;
       if (!blob) return null;
       const r = await readTagBlob(blob);
       const pic = r && r.tags && r.tags.picture;
@@ -1961,8 +2017,531 @@
     }
   }
 
+  // ── 받아 두기 (폰에 곡을 받아 두고 인터넷 없이 틀기) ───────────────
+  //  저장소: IndexedDB 하나("drive-music-dl")에 칸 두 개
+  //   tracks: 곡 정보 { id, name, size, mimeType, folderName, folderId, got(받은 바이트), parts(조각 수), done, at, tags(태그 사본) }
+  //   chunks: [곡ID, 순번] → Blob 조각 (2~4MB). 조각마다 바로 넣어서 끊겨도 받은 만큼은 남음 → 그 자리부터 이어 받기
+  //  틀 때는 조각들로 Blob을 만들어 blob: 주소 (열쇠·인터넷 없음). 주소는 state.dlUrls 에만 (state.blobUrls 와 따로)
+  //  localStorage: dm:dl = 다 받은 곡 ID (저장소가 지워졌는지 견주는 데), dm:dlqueue = 받을 차례 곡 ID, dm:dldel = 듣던 중이라 미뤄 둔 지우기
+  //  ※ 열쇠가 든 주소는 어디에도 안 넣음 (받기는 driveFetch 머리말로, 태그 읽기 remoteFile 과 같은 길)
+  const DL_DB = "drive-music-dl";
+  const DL_CHUNK = 3 * 1024 * 1024;   // 한 번에 받는 조각 3MB
+  const DL_GONE_MSG = "받은 곡이 지워졌어요 — 다시 받기";
+  const DL_GONE_PLAY = "받은 곡이 지워져 드라이브에서 틀어요";
+  const DL_NO = "이 브라우저에선 받아 두기를 못 해요";
+  const NO_NET_NO_DL = "인터넷이 없어요. 받아 둔 곡이 없어서 틀 게 없어요";
+  const DL_RANGE = (id) => IDBKeyRange.bound([id, 0], [id, Infinity]);
+  const isDl = (id) => { const m = state.dlMeta.get(id); return !!(m && m.done); };
+  const dlDoneList = () => [...state.dlMeta.values()].filter((m) => m.done)
+    .sort((a, b) => libColl.compare(a.folderName || "", b.folderName || "") || libColl.compare(a.name || "", b.name || ""));
+  const saveDlQueue = () => store.set("dlqueue", state.dlQueue);
+  const saveDlList = () => store.set("dl", [...new Set([...dlDoneList().map((m) => m.id), ...state.dlGone])]);
+  const dlPending = new Map();   // 듣는 중에 지운 곡: id -> 그 blob 주소 (곡이 바뀌면 저장소에서 지움)
+  let dlStats = { added: 0, done: 0 };   // 이번에 줄에 넣은 곡 수 / 다 받은 곡 수 (진행 줄 "3/12곡")
+
+  let dlDbP = null;
+  function dlDb() {
+    if (!dlDbP) {
+      dlDbP = new Promise((resolve, reject) => {
+        let req;
+        try { req = indexedDB.open(DL_DB, 1); } catch (e) { reject(e); return; }
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains("tracks")) db.createObjectStore("tracks", { keyPath: "id" });
+          if (!db.objectStoreNames.contains("chunks")) db.createObjectStore("chunks");
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error("IndexedDB를 못 열었어요"));
+        req.onblocked = () => reject(new Error("IndexedDB가 막혀 있어요"));
+      });
+    }
+    return dlDbP;
+  }
+  // 저장소 일 하나: fn(tx)가 돌려준 요청의 결과를, 일이 다 끝났을 때(oncomplete) 돌려줌
+  function idbRun(stores, mode, fn) {
+    return dlDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(stores, mode);
+      const req = fn(tx);
+      tx.oncomplete = () => resolve(req ? req.result : undefined);
+      tx.onerror = () => reject(tx.error || new Error("저장소 오류"));
+      tx.onabort = () => reject(tx.error || new Error("저장이 취소됐어요 (자리가 모자랄 수 있어요)"));
+    }));
+  }
+  const dlChunks = (id) => idbRun("chunks", "readonly", (tx) => tx.objectStore("chunks").getAll(DL_RANGE(id)));
+  const dlPutMeta = (m) => idbRun("tracks", "readwrite", (tx) => tx.objectStore("tracks").put(m));
+  // 조각 하나와 곡 정보(받은 바이트)를 한 번에 — 둘이 어긋나지 않게
+  const dlPutChunk = (m, bytes) => idbRun(["tracks", "chunks"], "readwrite", (tx) => {
+    tx.objectStore("chunks").put(new Blob([bytes]), [m.id, m.parts - 1]);
+    return tx.objectStore("tracks").put(m);
+  });
+  const dlDeleteRecords = (ids) => idbRun(["tracks", "chunks"], "readwrite", (tx) => {
+    for (const id of ids) { tx.objectStore("tracks").delete(id); tx.objectStore("chunks").delete(DL_RANGE(id)); }
+  });
+
+  // 시작할 때 한 번: 저장소를 열어 곡 정보를 읽고, dm:dl 과 견줘 "사라진 곡"을 찾음
+  let dlLoading = null;
+  function loadDl() {
+    if (dlLoading) return dlLoading;
+    dlLoading = idbRun("tracks", "readonly", (tx) => tx.objectStore("tracks").getAll()).then(async (rows) => {
+      state.dlOk = true;
+      const del = new Set(store.get("dldel", []));   // 지난번 듣던 중이라 미뤄 둔 지우기
+      if (del.size) { await dlDeleteRecords([...del]).catch(() => {}); store.del("dldel"); }
+      state.dlMeta = new Map(rows.filter((r) => r && r.id && !del.has(r.id)).map((r) => [r.id, r]));
+      state.dlQueue = store.get("dlqueue", []).filter((id) => { const m = state.dlMeta.get(id); return m && !m.done; });
+      saveDlQueue();
+      dlStats = { added: state.dlQueue.length, done: 0 };
+      state.dlGone = store.get("dl", []).filter((id) => !isDl(id));   // 있어야 하는데 저장소에 없음
+      saveDlList();
+      if (state.dlGone.length) dlGoneFound();
+      if (navigator.storage && navigator.storage.persisted) navigator.storage.persisted().then((v) => { state.dlPersisted = v; }).catch(() => {});
+      paintDlAll();
+    }).catch((e) => {
+      // 사파리 개인 정보 보호 모드 등: 몰래 다른 방식으로 넘어가지 않고 받기 단추를 끄고 알림
+      state.dlOk = false;
+      console.warn("[Drive Music] 받아 두기를 못 씀 (IndexedDB)", e && e.message);
+      paintDlAll();
+    });
+    return dlLoading;
+  }
+
+  // 받은 곡이 저장소에서 없어졌음 → 토스트 + "받은 곡" 화면 맨 위 안내 (다시 받기 단추)
+  function dlGoneFound() {
+    toast(DL_GONE_MSG, { label: "다시 받기", fn: regainDl });
+    renderDl();
+  }
+  // 틀려고 보니 조각이 모자람: 그 곡을 받은 곡에서 빼고 "사라짐"으로
+  function dlLost(id) {
+    state.dlMeta.delete(id);
+    const href = state.dlUrls.get(id);
+    if (href && !audioUses(href)) URL.revokeObjectURL(href);
+    state.dlUrls.delete(id);
+    if (!state.dlGone.includes(id)) state.dlGone.push(id);
+    saveDlList();
+    dlDeleteRecords([id]).catch(() => {});
+    dlGoneFound();
+    paintDlAll();
+  }
+  // [다시 받기]: 빠진 곡을 받기 줄에 다시 (인터넷이 있을 때)
+  function regainDl() {
+    if (state.offline || !navigator.onLine) { toast("인터넷이 있을 때 다시 받을 수 있어요"); return; }
+    const tracks = state.dlGone.map((id) => state.library.find((t) => t.id === id) || otherFolderTrack(id) ||
+      { id, name: id, title: id, size: 0, mimeType: "", folderName: "" });
+    enqueueDl(tracks);
+  }
+  function forgetGone() { state.dlGone = []; saveDlList(); renderDl(); }
+
+  // 받은 곡의 Blob 주소 (조각을 이어 붙임 — 데이터를 메모리로 다 올리지 않음). 같은 곡을 두 번 만들지 않게
+  const dlMaking = new Map();
+  function dlUrlOf(t) {
+    const id = t.id;
+    if (state.dlUrls.has(id)) return Promise.resolve(state.dlUrls.get(id));
+    if (dlMaking.has(id)) return dlMaking.get(id);
+    const p = dlChunks(id).then((parts) => {
+      const m = state.dlMeta.get(id);
+      const total = parts.reduce((n, b) => n + b.size, 0);
+      if (!m || !m.done || !parts.length || parts.length !== m.parts || total !== m.got) {
+        dlLost(id);
+        const e = new Error(DL_GONE_MSG); e.dlGone = true; throw e;
+      }
+      const href = URL.createObjectURL(new Blob(parts, { type: dlType(m) }));
+      state.dlUrls.set(id, href);
+      return href;
+    });
+    dlMaking.set(id, p);
+    const clear = () => dlMaking.delete(id);
+    p.then(clear, clear);
+    return p;
+  }
+  // Blob 종류 (사파리는 audio/mpeg 처럼 정확해야 틂)
+  const DL_TYPES = { mp3: "audio/mpeg", m4a: "audio/mp4", mp4: "audio/mp4", aac: "audio/aac", flac: "audio/flac", wav: "audio/wav", ogg: "audio/ogg", opus: "audio/ogg", aiff: "audio/aiff", wma: "audio/x-ms-wma" };
+  function dlType(m) {
+    if (m.mimeType && /^audio\/./.test(m.mimeType)) return m.mimeType;
+    return DL_TYPES[(String(m.name).split(".").pop() || "").toLowerCase()] || "audio/mpeg";
+  }
+  // 받은 곡 → 재생 큐에 넣을 곡 모양 (태그는 보관함 것이 있으면 그것, 없으면 받을 때의 사본)
+  function dlTrackOf(id) {
+    const m = state.dlMeta.get(id);
+    if (!m || !m.done) return null;
+    const e = state.tagDb.get(id);
+    return { id, name: m.name, title: stripExt(m.name), size: m.size, mimeType: m.mimeType, folderName: m.folderName,
+      tags: (e && e.tags) || m.tags || fallbackTags(m), keepTags: true };
+  }
+
+  // 곡 줄 옆 작은 표시: 받은 곡 ↓, 받는 중 %
+  function dlMark(id) {
+    const m = state.dlMeta.get(id);
+    if (!m) return "";
+    if (m.done) return "↓";
+    if (!state.dlQueue.includes(id)) return "";
+    return m.size ? Math.floor((m.got / m.size) * 100) + "%" : "…";
+  }
+  function paintDlMarks(id) {
+    for (const r of document.querySelectorAll(`.row[data-id="${CSS.escape(id)}"] .dlmark`)) r.textContent = dlMark(id);
+  }
+  // [↓ 받기] 칩: 그 목록에서 아직 안 받은 곡이 있으면 "↓ 받기", 다 받았으면 "✓ 받음"
+  function paintDlChip(btn, tracks) {
+    btn.dlTracks = tracks;
+    const left = tracks.filter((t) => !isDl(t.id));
+    const waiting = left.filter((t) => state.dlQueue.includes(t.id)).length;
+    btn.disabled = state.dlOk === false || !tracks.length || state.offline;
+    btn.title = state.dlOk === false ? DL_NO : "";
+    btn.classList.toggle("on", !!tracks.length && !left.length);
+    btn.textContent = state.dlOk === false ? "↓ 받기 못 함" : tracks.length && !left.length ? "✓ 받음"
+      : waiting && waiting === left.length ? "↓ 받는 중" : left.length < tracks.length ? `↓ 받기 (${left.length}곡 남음)` : "↓ 받기";
+  }
+  function dlChipClick(btn) {
+    const tracks = btn.dlTracks || [];
+    if (tracks.length && tracks.every((t) => isDl(t.id))) { toast("이미 다 받았어요"); return; }
+    enqueueDl(tracks);
+  }
+  // 받기 상태가 바뀌면: 줄 표시·칩·받은 곡 화면·로그인 화면 단추
+  function paintDlAll() {
+    for (const r of document.querySelectorAll(".row[data-id] .dlmark")) r.textContent = dlMark(r.parentElement.dataset.id);
+    if (el.btnLibDl.dlTracks) paintDlChip(el.btnLibDl, el.btnLibDl.dlTracks);
+    if (el.btnPlDl.dlTracks) paintDlChip(el.btnPlDl, el.btnPlDl.dlTracks);
+    renderDl();
+    paintLoginDl();
+  }
+  // 진행 줄 (#dl-progress, 화면 맨 위): "받는 중 3/12곡 · 45%" 또는 실패·쉼 이유
+  function dlLine(text, bad = false) {
+    el.dlProgress.classList.toggle("hidden", !text);
+    el.dlProgress.classList.toggle("bad", bad);
+    el.dlProgress.textContent = text || "";
+  }
+
+  // 남은 자리 (모르면 null)
+  async function dlSpaceLeft() {
+    try {
+      if (!navigator.storage || !navigator.storage.estimate) return null;
+      const e = await navigator.storage.estimate();
+      return e && e.quota ? Math.max(0, e.quota - (e.usage || 0)) : null;
+    } catch { return null; }
+  }
+  // 처음 받기를 누를 때: 브라우저에 "함부로 지우지 마세요"를 부탁하고 결과를 기억 (설정 줄에 보임)
+  function askPersist() {
+    if (state.dlPersisted || !navigator.storage || !navigator.storage.persist) return;
+    navigator.storage.persist().then((v) => { state.dlPersisted = v; }).catch(() => {});
+  }
+  // 크기·종류를 모르는 곡(다른 폴더 곡·다시 받기)은 드라이브에 한 번 물어봄
+  async function dlFileInfo(t) {
+    if (Number(t.size) > 0 && t.mimeType && t.mimeType !== "audio/" && /\.[^.]+$/.test(t.name || "")) return t;
+    const res = await driveFetch(`/files/${encodeURIComponent(t.id)}`, { fields: "id, name, size, mimeType", supportsAllDrives: "true" });
+    const f = await res.json();
+    return { ...t, name: f.name || t.name, size: Number(f.size) || 0, mimeType: f.mimeType || t.mimeType };
+  }
+
+  // 받기 줄에 넣기: 아직 안 받은 곡만 → 크기 합 + 여유 5%가 남은 자리보다 크면 받지 않고 알림 → 줄에 넣고 받기 시작
+  async function enqueueDl(tracks) {
+    await loadDl();
+    if (state.dlOk === false) { toast(DL_NO); dlLine(DL_NO, true); return; }
+    if (state.offline || !navigator.onLine) { toast("인터넷이 있을 때 받을 수 있어요"); return; }
+    askPersist();
+    const seen = new Set();
+    let todo = tracks.filter((t) => t && !isDl(t.id) && !state.dlQueue.includes(t.id) && !dlPending.has(t.id) && !seen.has(t.id) && seen.add(t.id));
+    if (!todo.length) { toast(tracks.length ? "이미 받았거나 받는 중이에요" : "받을 곡이 없어요"); return; }
+    try {
+      const full = [];
+      for (const t of todo) full.push(await dlFileInfo(t));
+      todo = full;
+    } catch (e) {
+      toast("곡 정보를 못 읽어 받기를 못 했어요: " + e.message);
+      return;
+    }
+    // 자리 확인 (받기 시작보다 먼저)
+    const need = todo.reduce((n, t) => n + Math.max(0, (Number(t.size) || 0) - ((state.dlMeta.get(t.id) || {}).got || 0)), 0) * 1.05;
+    const free = await dlSpaceLeft();
+    if (free != null && need > free) { showNoSpace(need, free); return; }
+    try {
+      for (const t of todo) {
+        const old = state.dlMeta.get(t.id);
+        const m = old && !old.done ? { ...old, name: t.name, size: Number(t.size) || old.size } : {
+          id: t.id, name: t.name, size: Number(t.size) || 0, mimeType: t.mimeType || "", folderName: t.folderName || "",
+          folderId: state.folder ? state.folder.id : "", got: 0, parts: 0, done: false, at: 0,
+          tags: t.tags ? { ...t.tags } : fallbackTags(t),
+        };
+        await dlPutMeta(m);
+        state.dlMeta.set(t.id, m);
+      }
+    } catch (e) {
+      toast("받아 둘 자리를 못 만들었어요: " + e.message);
+      dlLine("받기 실패: " + e.message, true);
+      return;
+    }
+    const ids = todo.map((t) => t.id);
+    state.dlGone = state.dlGone.filter((id) => !ids.includes(id));
+    state.dlQueue.push(...ids);
+    saveDlQueue(); saveDlList();
+    if (!dlStats.added || dlStats.done >= dlStats.added) dlStats = { added: 0, done: 0 };
+    dlStats.added += ids.length;
+    toast(`${ids.length}곡 받기 시작 (${fmtSize(need / 1.05)})`);
+    paintDlAll();
+    pumpDl();
+  }
+  function showNoSpace(need, free) {
+    openMSheet({
+      title: "자리가 모자라요",
+      sub: `필요 ${fmtSize(need)}, 남은 ${fmtSize(free)}`,
+      body: elt(`<p class="taghelp">받지 않았어요. ⚙ → 받은 곡에서 안 듣는 곡을 지우거나, 더 적은 곡을 골라 받아 주세요.</p>`),
+    });
+  }
+
+  // 받기 일꾼: 한 번에 한 곡씩, 조각(3MB)마다 저장소에 바로 넣음. 하나만 돌아감
+  //  인터넷이 없거나, 열쇠가 끝났는데 화면이 뒤에 있으면(구글 창이 막힘) 억지로 받지 않고 쉼 → online·visible·앱 열기 때 이어 받음
+  let dlRunning = false;
+  async function pumpDl() {
+    if (dlRunning || !state.dlOk) return;
+    dlRunning = true;
+    try {
+      while (state.dlQueue.length) {
+        const id = state.dlQueue[0];
+        const m = state.dlMeta.get(id);
+        if (!m || m.done) { state.dlQueue.shift(); saveDlQueue(); continue; }
+        const left = state.dlQueue.length;
+        if (!navigator.onLine) { dlLine(`인터넷이 없어 받기를 쉬어요 — ${left}곡 남음 (인터넷이 돌아오면 이어 받아요)`); return; }
+        if (!tokenValid() && (!state.token || document.visibilityState !== "visible")) {
+          dlLine(state.token ? `받기 쉼 — 앱을 다시 열면 이어 받아요 (${left}곡 남음)` : `받기 쉼 — 로그인하면 이어 받아요 (${left}곡 남음)`);
+          return;
+        }
+        const pct = m.size ? Math.floor((m.got / m.size) * 100) : 0;
+        dlLine(`받는 중 ${Math.min(dlStats.done + 1, Math.max(dlStats.added, 1))}/${Math.max(dlStats.added, dlStats.done + 1)}곡 · ${pct}% · ${m.name}`);
+        const end = m.size ? Math.min(m.got + DL_CHUNK, m.size) - 1 : m.got + DL_CHUNK - 1;
+        let bytes;
+        try { bytes = await fetchBytes(id, m.got, end); }
+        catch (e) { dlFail(m, e); return; }
+        if (state.dlQueue[0] !== id) continue;   // 받는 사이에 "받기 멈추고 빼기"를 눌렀음
+        const last = m.size ? m.got + bytes.length >= m.size : bytes.length < DL_CHUNK;
+        if (!bytes.length && !last) { dlFail(m, new Error("받은 조각이 비어 있어요")); return; }
+        const nm = { ...m, got: m.got + bytes.length, parts: m.parts + (bytes.length ? 1 : 0), done: last, at: last ? Date.now() : 0 };   // 빈 조각은 안 넣음
+        try {
+          if (bytes.length) await dlPutChunk(nm, bytes); else await dlPutMeta(nm);
+        } catch (e) { dlFail(m, e); return; }
+        state.dlMeta.set(id, nm);
+        if (last) {
+          state.dlQueue.shift(); saveDlQueue(); saveDlList();
+          dlStats.done++;
+          paintDlAll();
+          renewNext();   // 다음 곡이 방금 받은 곡이면 받은 곡 주소로 다시 준비
+        } else paintDlMarks(id);
+      }
+      if (dlStats.done) toast(`받기 끝 — ${dlStats.done}곡을 폰에 받아 뒀어요`);
+      dlStats = { added: 0, done: 0 };
+      dlLine("");
+    } finally {
+      dlRunning = false;
+    }
+  }
+  // 받기 실패: 조용히 넘기지 않음. 그 곡은 줄에 남겨 다음에 다시 (드라이브에 없는 곡만 줄에서 뺌)
+  function dlFail(m, e) {
+    const quota = e && (e.name === "QuotaExceededError" || /quota/i.test(e.message || ""));
+    const gone = e && (e.status === 404 || e.status === 403);
+    const why = quota ? "자리가 모자라요" : e && e.tokenFail ? "구글 연결이 끊겼어요" : gone ? "드라이브에서 그 곡을 못 열어요" : (e && e.message) || "알 수 없는 오류";
+    console.warn("[Drive Music] 받기 실패:", m.name, why);
+    if (gone) {
+      state.dlQueue = state.dlQueue.filter((id) => id !== m.id); saveDlQueue();
+      state.dlMeta.delete(m.id); dlDeleteRecords([m.id]).catch(() => {});
+      dlLine(`받기 실패: ${m.name} — ${why}. 받기 줄에서 뺐어요`, true);
+    } else {
+      dlLine(`받기 실패: ${m.name} — ${why}. 받은 데까지는 남아 있고, 다음에 이어 받아요`, true);
+    }
+    toast(`받기 실패 — ${why}`);
+    paintDlAll();
+  }
+
+  // 지우기 (곡별·전부): 저장소·dm:dl·받기 줄에서. 지금 듣는 곡이면 소리는 끝까지 두고 곡이 바뀔 때 저장소에서 지움
+  async function dlRemove(ids) {
+    const now = [];
+    for (const id of ids) {
+      const href = state.dlUrls.get(id);
+      state.dlUrls.delete(id);
+      state.dlMeta.delete(id);
+      if (href && audioUses(href)) dlPending.set(id, href);
+      else { if (href) URL.revokeObjectURL(href); now.push(id); }
+    }
+    state.dlQueue = state.dlQueue.filter((id) => !ids.includes(id));
+    state.dlGone = state.dlGone.filter((id) => !ids.includes(id));
+    if (state.nextReady && state.nextReady.dl && ids.includes(state.nextReady.id)) state.nextReady = null;
+    saveDlQueue(); saveDlList();
+    store.set("dldel", [...dlPending.keys()]);
+    try { if (now.length) await dlDeleteRecords(now); }
+    catch (e) { toast("지우기 실패: " + e.message); }
+    paintDlAll();
+    renewNext();
+  }
+  // 오디오에 다른 곡이 걸리면, 미뤄 둔 지우기를 마저
+  function flushDlPending() {
+    const ids = [];
+    for (const [id, href] of dlPending) if (!audioUses(href)) { URL.revokeObjectURL(href); dlPending.delete(id); ids.push(id); }
+    if (!ids.length) return;
+    store.set("dldel", [...dlPending.keys()]);
+    dlDeleteRecords(ids).catch(() => {});
+  }
+  function dlClearAll() {
+    return dlRemove([...new Set([...state.dlMeta.keys(), ...state.dlGone])]).then(() => toast("받은 곡을 전부 지웠어요"));
+  }
+  // [전부 지우기] — 확인 창의 빨간 [전부 지우기]를 눌러야만 지움 (로그아웃 확인과 같은 모양)
+  function confirmDlClear() {
+    const n = state.dlMeta.size;
+    if (!n && !state.dlGone.length) { toast("받은 곡이 없어요"); return; }
+    openMSheet({
+      title: "받은 곡을 전부 지울까요?",
+      sub: `${n}곡 · 이 기기에서만 지워요 (드라이브 파일은 그대로)`,
+      body: document.createElement("div"),
+      ok: { label: "전부 지우기", danger: true, fn: () => { dlClearAll(); } },
+    });
+  }
+
+  // ⚙ 메뉴 "받은 곡" 줄의 작은 글씨: N곡 · 1.2 GB · 안 지워짐 / 사파리가 지울 수 있음
+  function dlMenuSub() {
+    if (state.dlOk === false) return DL_NO;
+    const done = dlDoneList();
+    const total = done.reduce((n, m) => n + (m.got || 0), 0);
+    const keep = state.dlPersisted === true ? "안 지워짐" : state.dlPersisted === false ? "사파리가 지울 수 있음" : "지워질지 아직 모름";
+    return [`${done.length}곡`, fmtSize(total), keep, state.dlQueue.length ? `받는 중 ${state.dlQueue.length}곡` : ""].filter(Boolean).join(" · ");
+  }
+
+  // "받은 곡" 화면 (#s-dl): 용량·남은 자리·지워질 수 있음 → [▶ 재생][⇄ 섞기] → 곡 줄(크기·✕) → [전부 지우기]
+  //  ←·로고·브라우저 뒤로가기는 모두 closeDlScreen() = 곡 목록(오프라인이면 오프라인 목록)
+  function openDlScreen() {
+    show(el.sDl);
+    el.hdrSub.textContent = "";
+    renderDl();
+  }
+  function closeDlScreen() {
+    if (state.folder || state.offline) {
+      show(el.sTracks);
+      el.hdrSub.textContent = state.folder ? state.folder.name : "받은 곡";
+      showTab(store.get("tab", "lib") === "pl" ? "pl" : "lib");
+      renderLib();
+    } else if (state.token) showFolderPicker();
+    else show(el.sLogin);
+  }
+  function renderDl() {
+    if (!el.sDl.classList.contains("show")) return;
+    const done = dlDoneList();
+    const waiting = state.dlQueue.map((id) => state.dlMeta.get(id)).filter((m) => m && !m.done);
+    const total = done.reduce((n, m) => n + (m.got || 0), 0);
+    el.dlCount.textContent = done.length ? `${done.length}곡` : "";
+    el.dlGone.classList.toggle("hidden", !state.dlGone.length);
+    el.dlGoneText.textContent = state.dlGone.length ? `받은 곡이 지워졌어요 (${state.dlGone.length}곡) — 다시 받기를 누르면 줄에 다시 넣어요` : "";
+    const keep = state.dlPersisted === true ? "브라우저가 함부로 지우지 않아요 (안 지워짐)"
+      : "자리가 모자라면 사파리가 지울 수 있어요 — 홈 화면 아이콘으로 쓰면 덜 지워져요";
+    el.dlInfo.textContent = "";
+    const lines = state.dlOk === false ? [DL_NO] : [`받은 곡 ${fmtSize(total)}`, "남은 자리 확인 중…", keep];
+    for (const t of lines) { const d = document.createElement("div"); d.textContent = t; el.dlInfo.appendChild(d); }
+    if (state.dlOk !== false) dlSpaceLeft().then((free) => {
+      const d = el.dlInfo.children[1];
+      if (d) d.textContent = free == null ? "남은 자리: 이 브라우저는 알려 주지 않아요" : `남은 자리 ${fmtSize(free)}`;
+    });
+    el.btnDlPlay.disabled = el.btnDlShuffle.disabled = !done.length;
+    el.btnDlClear.disabled = !state.dlMeta.size && !state.dlGone.length;
+    el.dlEmpty.classList.toggle("hidden", !!(done.length || waiting.length));
+    el.dlList.innerHTML = "";
+    const cur = currentTrack();
+    const rowOf = (m, i, onPlay) => {
+      const t = dlTrackOf(m.id) || { id: m.id, name: m.name, title: stripExt(m.name), size: m.size, folderName: m.folderName, tags: m.tags };
+      const r = trackRow(t, i, {
+        playing: !!cur && cur.id === m.id,
+        sub: [fmtSize(m.done ? m.got : m.size), m.folderName, m.done ? "" : "받는 중"].filter(Boolean).join(" · "),
+        onPlay,
+      });
+      const x = document.createElement("button");
+      x.className = "act"; x.title = m.done ? "받은 곡 지우기" : "받기 멈추고 빼기"; x.innerHTML = SVG_X;
+      x.onclick = () => dlRemove([m.id]).then(() => toast(m.done ? "받은 곡에서 지웠어요" : "받기 줄에서 뺐어요"));
+      r.appendChild(x);
+      return r;
+    };
+    done.forEach((m, i) => el.dlList.appendChild(rowOf(m, i, () => playDl(null, i))));
+    waiting.forEach((m, i) => el.dlList.appendChild(rowOf(m, done.length + i, () => toast("아직 받는 중이에요"))));
+  }
+  // 받은 곡 재생: 큐 출처 {type:"offline"}, 하단 글씨 "♪ 받은 곡"
+  function playDl(shuffle, i) {
+    const tracks = dlDoneList().map((m) => dlTrackOf(m.id));
+    if (!tracks.length) { toast("받은 곡이 없어요"); return; }
+    if (shuffle != null) setShuffle(shuffle);
+    setQueue({ type: "offline" }, tracks);
+    if (i == null) { state.pos = 0; playCurrent(); } else playIndex(i);
+  }
+
+  // ── 오프라인 (인터넷 없이 받은 곡만) ──────────────────────────
+  //  앱 껍데기(화면·코드)는 sw.js 가 폰에 담아 둠. 시작할 때 인터넷·구글 스크립트가 없는데 받은 곡이 있으면 로그인 대신 오프라인 목록
+  //  #s-tracks 를 그대로 쓰고 보관함 = 받은 곡(태그 사본). 플레이리스트는 이 기기 사본에서 받은 곡만. 고치기는 막음(offlineBlock)
+  function setOfflineNote(why) {
+    el.offlineNote.classList.toggle("hidden", !why);
+    el.offlineText.textContent = why === "net" ? "인터넷이 없어요 — 받은 곡만 보여요"
+      : why === "nologin" ? "로그인 전이라 받은 곡만 보여요"
+      : why === "back" ? "인터넷이 돌아왔어요 — 로그인하면 전체 곡이 보여요" : "";
+    el.btnOfflineLogin.classList.toggle("hidden", !(why === "nologin" || why === "back"));
+  }
+  function startOffline(why) {
+    state.offline = true; state.onlineLib = null;
+    state.folder = null;
+    // 태그·플레이리스트는 이 기기에 남은 사본으로 (드라이브엔 안 물어봄)
+    for (const [id, e] of Object.entries(store.get("library", {}))) if (e && e.tags && !state.tagDb.has(id)) state.tagDb.set(id, e);
+    state.playlists = store.get("playlists", []);
+    notice("");
+    setOfflineNote(why);
+    show(el.sTracks);
+    el.hdrSub.textContent = "받은 곡";
+    el.tracksTitle.textContent = "받은 곡";
+    el.libQ.value = "";
+    showTab(store.get("tab", "lib") === "pl" ? "pl" : "lib");
+    setLibrary(dlDoneList().map((m) => dlTrackOf(m.id)));
+  }
+  // 쓰는 중에 인터넷이 끊김: 지금 목록·분류·플레이리스트를 받은 곡만 보이게 (큐에서도 안 받은 곡은 뺌, 지금 곡은 남김)
+  function goOffline() {
+    if (state.offline) { if (!state.onlineLib) setOfflineNote("net"); return; }
+    if (el.sLogin.classList.contains("show")) {
+      loadDl().then(() => {
+        if (state.offline || !el.sLogin.classList.contains("show")) return;
+        if (dlDoneList().length) startOffline("net"); else notice(NO_NET_NO_DL);
+      });
+      return;
+    }
+    if (!state.folder || !state.library.length) return;   // 폴더 고르기 중: 드라이브 일이 실패하면 그 자리에서 알림
+    state.offline = true; state.plEditing = false;
+    state.onlineLib = state.library;
+    refreshLibrary(state.library.filter((t) => isDl(t.id)));
+    const cur = currentTrack();
+    const keep = state.tracks.filter((t) => isDl(t.id) || (cur && t.id === cur.id));
+    if (keep.length !== state.tracks.length) { state.tracks = keep; rebuildOrder(); renewNext(); }
+    setOfflineNote("net");
+    if (state.openPl) renderPlaylistDetail();
+    if (plShown()) renderPlaylistList();
+    toast("인터넷이 끊겼어요 — 받은 곡만 보여요");
+  }
+  // 인터넷이 돌아옴: 쓰다 끊긴 거면 원래 목록으로. 오프라인으로 시작했으면 구글 창을 저절로 띄우지 않고 [로그인] 단추만
+  function goOnline() {
+    if (!state.offline) { pumpDl(); return; }
+    if (state.onlineLib) {
+      const lib = state.onlineLib;
+      state.onlineLib = null; state.offline = false;
+      setOfflineNote("");
+      refreshLibrary(lib);
+      if (state.openPl) renderPlaylistDetail();
+      if (plShown()) renderPlaylistList();
+      toast("인터넷이 돌아왔어요");
+      pumpDl();
+      return;
+    }
+    setOfflineNote("back");
+  }
+  function loginFromOffline() {
+    if (!navigator.onLine) { toast("아직 인터넷이 없어요"); return; }
+    if (!window.google || !google.accounts) { location.reload(); return; }   // 구글 스크립트를 못 받은 채 연 앱 → 새로 열기
+    state.offline = false; setOfflineNote("");
+    state.library = []; state.libFor = null;
+    show(el.sLogin);
+    login();
+  }
+  // 로그인 화면: 받은 곡이 있으면 "받아 둔 곡 듣기" 단추
+  function paintLoginDl() {
+    const n = dlDoneList().length;
+    el.btnLoginDl.classList.toggle("hidden", !n);
+    el.btnLoginDl.textContent = `받아 둔 곡 ${n}곡 듣기 (로그인 없이)`;
+  }
+
   // ── 파일 받아오기 ──────────────────────────────────────────
-  const BLOB_MAX = 6;            // 받아둔 파일은 최근 6곡만 (지금 곡은 빼고 오래된 것부터 지움)
+  const BLOB_MAX = 6;           // 받아둔 파일은 최근 6곡만 (지금 곡은 빼고 오래된 것부터 지움)
   const fetching = new Map();    // trackId -> 받는 중인 약속 (같은 곡을 두 번 받지 않게)
   const audioUses = (u) => !!u && el.audio.src === u;   // 오디오가 지금 이 주소를 쓰고 있음
   // 바로 듣기 주소: <audio>는 머리말(헤더)을 못 붙여서 열쇠를 주소에 넣음.
@@ -1972,7 +2551,14 @@
   const FALLBACK_MSG = "바로 듣기가 안 돼 통째로 받아 틀어요(대체됨)";
   // 곡 주소 만들기. 기본은 바로 듣기 주소(받지 않고 주소만) — <audio>가 알아서 조금씩 받음
   //  whole=true 거나 바로 듣기가 안 되는 접속(state.streamOff, 대체됨)이면 예전처럼 통째로 받아 Blob 주소
+  //  맨 먼저: 받은 곡이면 이 기기 저장소의 blob: 주소 (열쇠·인터넷 없이). 저장소에서 없어졌고 인터넷이 있으면
+  //  바로 듣기로 틀되 조용히 넘기지 않고 "받은 곡이 지워져 드라이브에서 틀어요" (afterStart 에서 표시)
   async function fetchTrackUrl(track, { whole = false } = {}) {
+    if (isDl(track.id)) return dlUrlOf(track).catch((e) => {
+      if (!e || !e.dlGone || !navigator.onLine || state.offline) throw e;
+      state.dlGoneNote = track.id;
+      return fetchTrackUrl(track, { whole });
+    });
     if (state.blobUrls.has(track.id)) {
       const u = state.blobUrls.get(track.id);
       state.blobUrls.delete(track.id); state.blobUrls.set(track.id, u);   // 다시 쓴 곡은 "최근"으로
@@ -2012,10 +2598,16 @@
     if (n == null) return;
     const t = state.tracks[state.order[n]];
     if (!t) return;
-    const ready = (url, stream) => {   // 그새 순서가 바뀌지 않았을 때만
+    const ready = (url, stream, dl = false) => {   // 그새 순서가 바뀌지 않았을 때만
       const m = nextPos(false);
-      if (m === n && state.tracks[state.order[m]] === t) state.nextReady = { id: t.id, pos: n, url, stream };
+      if (m === n && state.tracks[state.order[m]] === t) state.nextReady = { id: t.id, pos: n, url, stream, dl };
     };
+    // 받은 곡: 열쇠 계산 없이 이 기기 저장소의 주소를 곧바로 (dl 표시 → playReady 가 state.dlUrls 에서 씀)
+    if (isDl(t.id)) {
+      if (state.dlUrls.has(t.id)) ready(state.dlUrls.get(t.id), false, true);
+      else dlUrlOf(t).then((href) => ready(href, false, true)).catch(() => {});
+      return;
+    }
     if (state.blobUrls.has(t.id)) { ready(state.blobUrls.get(t.id), false); return; }
     if (state.streamOff) {   // 통째 받기(대체됨): 예전처럼 미리 받아 둠
       if (!fetching.has(t.id)) fetchTrackUrl(t, { whole: true }).then((u) => ready(u, false)).catch(() => {});
@@ -2092,6 +2684,7 @@
   function afterStart(t, url) {
     state.failRun = 0;
     if (state.fallbackNote) { state.fallbackNote = false; el.npSub.textContent = FALLBACK_MSG; toast(FALLBACK_MSG); }
+    if (state.dlGoneNote === t.id) { state.dlGoneNote = null; el.npSub.textContent = DL_GONE_PLAY; toast(DL_GONE_PLAY, { label: "다시 받기", fn: regainDl }); }
     prefetchNext();
     loadArt(t, url).then((art) => { if (art && currentTrack() === t) { showArt(art); updateMediaSession(t, art); } });
   }
@@ -2104,8 +2697,8 @@
     const n = nextPos(state.repeat === "all");
     const t = n == null ? null : state.tracks[state.order[n]];
     if (!r || !t || r.id !== t.id || r.pos !== n) return false;
-    const url = r.stream ? (tokenValid() ? streamUrl(t.id) : r.url) : state.blobUrls.get(t.id);
-    if (!url || (!r.stream && url !== r.url)) return false;   // 받아둔 파일이 그새 지워짐
+    const url = r.dl ? state.dlUrls.get(t.id) : r.stream ? (tokenValid() ? streamUrl(t.id) : r.url) : state.blobUrls.get(t.id);   // 받은 곡은 dlUrls
+    if (!url || (!r.stream && url !== r.url)) return false;   // 받아둔 파일(받은 곡)이 그새 지워짐
     state.nextReady = null;
     state.pos = n; state.loadingId = t.id; state.audioFor = t.id; state.wantPlay = true;
     if (state.retryId !== t.id) state.retryId = null;
@@ -2145,7 +2738,7 @@
     const src = state.source;
     return src.type === "playlist" ? src.name
       : src.type === "group" ? `${(KINDS[src.kind] || {}).label || ""}: ${src.name}`
-      : src.type === "view" ? src.name : "전체 곡";
+      : src.type === "view" ? src.name : src.type === "offline" ? "받은 곡" : "전체 곡";
   }
 
   // 다음 곡 시트: 하단 플레이어 곡 이름·표지를 누르면. 실제 재생 순서(state.order)대로, 지금 곡 다음부터
@@ -2235,7 +2828,8 @@
     // 열쇠가 만료됐고 받아야 할 파일이 있으면, 누름 효력이 살아 있는 지금 곧바로 구글에 요청 (await 없이).
     //  받는 중(멈춘 요청)이 있어도 창을 한 번 더 띄우고, 답은 같은 약속으로 와서 기다리던 곳이 다 풀림
     const needFile = !cur || !el.audio.src || state.audioFor !== cur.id || stale;
-    if (needFile && !tokenValid() && !(cur && state.blobUrls.has(cur.id))) {
+    //  받은 곡은 열쇠 문제로 보지 않음 (인터넷·열쇠 없이 틂)
+    if (needFile && !tokenValid() && !(cur && (state.blobUrls.has(cur.id) || isDl(cur.id)))) {
       state.tokenLost = false;
       requestToken("", { again: true }).catch(() => {});
     }
@@ -2360,7 +2954,10 @@
     checkResume();
     scheduleTokenRefresh();   // 뒤에 있던 동안 못 받은 열쇠를 앞에서 다시
     renewNext();              // 새 열쇠로 다음 곡 주소도
+    pumpDl();                 // 뒤에서 쉬던 받기를 이어서
   });
+  window.addEventListener("offline", goOffline);
+  window.addEventListener("online", goOnline);
   window.addEventListener("pageshow", checkResume);
   window.addEventListener("pagehide", saveResume);
 
@@ -2376,6 +2973,7 @@
     syncPosition();
   });
   el.audio.addEventListener("seeked", syncPosition);
+  el.audio.addEventListener("loadstart", flushDlPending);   // 다른 곡이 걸리면 듣던 중 지운 받은 곡을 저장소에서 마저 지움
   // 곡이 끝남: 준비해 둔 다음 곡이면 기다림 없이 곧바로(playReady), 아니면 예전처럼(next → playCurrent)
   el.audio.addEventListener("ended", () => {
     if (state.repeat === "one") return;   // 한 곡 반복은 el.audio.loop 가 알아서
@@ -2412,12 +3010,15 @@
       return;
     }
     // 바로 듣기 주소면 듣는 중 오류(아이폰이 다시 받다 열쇠가 끝나 401 등)도 "주소를 잃음" — 새 열쇠로 그 자리부터 한 번
-    const lost = !src || state.audioFor !== t.id || (stream ? true : state.blobUrls.get(t.id) !== src) || code === 2;
+    //  받은 곡 주소(dlUrls)가 멀쩡히 걸려 있으면 열쇠 문제가 아님 → 잃음으로 치지 않음
+    const dlSrc = !!src && state.dlUrls.get(t.id) === src;
+    const lost = !src || state.audioFor !== t.id || (stream ? true : state.blobUrls.get(t.id) !== src && !dlSrc) || code === 2;
     if (lost && state.retryId !== t.id) {
       state.retryId = t.id;
       const at = el.audio.currentTime || 0;
       const u = state.blobUrls.get(t.id);
       if (u && u === src) { URL.revokeObjectURL(u); state.blobUrls.delete(t.id); }   // 망가진 주소는 버리고 새로 받음
+      if (dlSrc) state.dlUrls.delete(t.id);   // 받은 곡이면 저장소 조각으로 다시 만듦
       el.npSub.textContent = "파일을 다시 받는 중…";
       playCurrent(at);
       return;
@@ -2448,12 +3049,15 @@
   el.btnLogin.onclick = login;
   el.btnSettings.onclick = openSettingsMenu;
   // 맨 위 로고 = 첫 화면(곡 목록). 드라이브에 다시 묻지 않고, 듣던 곡·큐·섞기는 그대로
+  //  오프라인 목록(state.folder 없음)에서도 막히지 않음: 그 목록 맨 위로
   function goHome() {
     closeSheet(); closeMSheet();
-    if (el.sLogin.classList.contains("show") || !state.folder) return;   // 로그인 전이거나 돌아갈 폴더가 없음
+    if (el.sLogin.classList.contains("show")) return;   // 로그인 화면이 첫 화면
+    if (el.sDl.classList.contains("show")) return closeDlScreen();   // 받은 곡 → 곡 목록(오프라인 목록)
+    if (el.sTracks.classList.contains("show")) { mainEl.scrollTop = 0; return; }
+    if (!state.folder && !state.offline) return;   // 돌아갈 폴더가 없음
     if (el.sPl.classList.contains("show")) return closePlaylist();
     if (el.sTags.classList.contains("show")) return closeTagEditor();
-    if (el.sTracks.classList.contains("show")) { mainEl.scrollTop = 0; return; }
     return backToTracks();
   }
   // 폴더 고르기 화면 → 열던 폴더의 곡 목록으로 (로고·← 뒤로·브라우저 뒤로가기가 같이 씀)
@@ -2474,7 +3078,8 @@
     fromPop = true;
     try {
       if (!location.hash) {   // 첫 화면 주소로 돌아옴
-        if (el.sTags.classList.contains("show")) closeTagEditor();
+        if (el.sDl.classList.contains("show")) closeDlScreen();
+        else if (el.sTags.classList.contains("show")) closeTagEditor();
         else if (el.sPl.classList.contains("show")) closePlaylist();
         else if (el.sFolder.classList.contains("show")) backToTracks();
       } else {   // 앞으로 가기로 하위 화면 주소가 됨 — 그 화면을 다시 만들 수 없으니 지금 화면 주소로 되돌림
@@ -2521,7 +3126,8 @@
 
   // 플레이리스트
   el.btnBack.onclick = () => {
-    if (el.sTags.classList.contains("show")) closeTagEditor();
+    if (el.sDl.classList.contains("show")) closeDlScreen();
+    else if (el.sTags.classList.contains("show")) closeTagEditor();
     else if (el.sPl.classList.contains("show")) closePlaylist();
     else if (el.sFolder.classList.contains("show")) backToTracks();   // 폴더 고르기 → 곡 목록 (로고와 같은 길)
   };
@@ -2536,7 +3142,17 @@
   el.plNewName.addEventListener("keydown", (e) => { if (e.key === "Enter") el.btnPlNew.click(); });
   el.btnPlPlay.onclick = () => playPlaylist(false);
   el.btnPlShuffle.onclick = () => playPlaylist(true);
-  el.btnPlEdit.onclick = () => { state.plEditing = !state.plEditing; renderPlaylistDetail(); };
+  el.btnPlEdit.onclick = () => { if (offlineBlock()) return; state.plEditing = !state.plEditing; renderPlaylistDetail(); };
+  // 받아 두기: 묶음 안·플레이리스트 상세의 [↓ 받기], 받은 곡 화면, 오프라인 안내 줄의 [로그인], 로그인 화면의 "받아 둔 곡 듣기"
+  el.btnLibDl.onclick = () => dlChipClick(el.btnLibDl);
+  el.btnPlDl.onclick = () => dlChipClick(el.btnPlDl);
+  el.btnDlPlay.onclick = () => playDl(false);
+  el.btnDlShuffle.onclick = () => playDl(true);
+  el.btnDlClear.onclick = confirmDlClear;
+  el.btnDlRegain.onclick = regainDl;
+  el.btnDlForget.onclick = forgetGone;
+  el.btnOfflineLogin.onclick = loginFromOffline;
+  el.btnLoginDl.onclick = () => startOffline(navigator.onLine ? "nologin" : "net");
   el.btnPlRename.onclick = renamePlaylist;
   el.btnPlDelete.onclick = deletePlaylist;
   el.dim.onclick = () => { closeSheet(); closeMSheet(); };
@@ -2548,7 +3164,7 @@
     if (el.sheet.classList.contains("show") || el.msheet.classList.contains("show")) { e.preventDefault(); closeSheet(); closeMSheet(); }
   });
   el.msheetCancel.onclick = closeMSheet;
-  el.btnGroupEdit.onclick = () => { state.groupEditing = !state.groupEditing; state.groupChecked.clear(); renderLib(); };
+  el.btnGroupEdit.onclick = () => { if (offlineBlock()) return; state.groupEditing = !state.groupEditing; state.groupChecked.clear(); renderLib(); };
   el.btnMerge.onclick = () => {
     const groups = buildGroups(state.libView.kind).filter((g) => state.groupChecked.has(g.key));
     if (groups.length >= 2) openMerge(groups);
@@ -2580,9 +3196,20 @@
     el.btnShuffle.classList.toggle("active", state.shuffle);
     applyRepeatUI();
     setupMediaSession();   // 잠금화면 버튼은 여기서 한 번만
+    // 앱 껍데기를 폰에 담아 두는 service worker — 상대경로(GitHub Pages 하위 경로에서도 그 폴더 안만)
+    if ("serviceWorker" in navigator && location.protocol !== "file:")
+      navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("[Drive Music] 오프라인 껍데기(sw.js) 등록 실패", e && e.message));
 
     try { state.token = JSON.parse(sessionStorage.getItem("dm:token") || "null"); } catch {}
-    if (tokenValid()) {
+    // 인터넷이 없거나 구글 로그인 스크립트를 못 받았으면 로그인 대신 오프라인 목록(받은 곡이 있을 때) — 아래 loadDl 뒤에
+    const noNet = () => navigator.onLine === false || !!window.dmGsiFailed;
+    const offlineStart = () => loadDl().then(() => {
+      paintLoginDl();
+      if (state.offline || !el.sLogin.classList.contains("show") || !noNet()) return;
+      if (dlDoneList().length) startOffline("net"); else notice(NO_NET_NO_DL);
+    });
+    window.addEventListener("dm-gsi-failed", offlineStart);   // index.html 의 구글 스크립트 onerror
+    if (tokenValid() && !noNet()) {
       scheduleTokenRefresh();
       // 같은 탭에서 새로고침한 경우 — 로그인 창 없이 바로 이어감
       const tick = setInterval(() => { if (ensureTokenClient()) { clearInterval(tick); afterLogin().catch((e) => { show(el.sLogin); notice(e.message); }); } }, 100);
@@ -2591,5 +3218,6 @@
       show(el.sLogin);
       if (location.protocol === "file:") notice("파일을 더블클릭으로 연 상태예요. 구글 로그인은 이렇게 열면 안 되고, README의 2번처럼 서버로 띄워서 열어야 합니다.");
     }
+    offlineStart().then(pumpDl);   // 받은 곡 정보 읽기 (사라진 곡 견주기) → 받다 만 곡 이어 받기
   })();
 })();

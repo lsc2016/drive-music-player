@@ -303,6 +303,20 @@
     }
     body:has(#player.show) .mergebar { bottom: calc(165px + var(--safe-b)); }
 
+    /* ── 받아 두기 ── */
+    .dlline { margin: 10px 16px 0; padding: 8px 12px; border-radius: 10px; background: var(--panel-2); color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dlline.bad { color: #ffb4b4; background: #2a1f1f; white-space: normal; }
+    .row .dlmark { flex: none; color: var(--accent); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .row .dlmark:empty { display: none; }
+    #btn-lib-dl.on, #btn-pl-dl.on { outline: 0; color: var(--accent); }   /* ✓ 받음 */
+    .dlinfo { color: var(--muted); font-size: 13px; line-height: 1.6; margin: -4px 0 12px; }
+    .dlgone { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .dlgone span { flex: 1; min-width: 0; }
+    .dlgone button { flex: none; padding: 6px 12px; border-radius: 999px; background: var(--panel-2); color: var(--text); font-weight: 600; font-size: 13px; }
+    .dlclear { display: block; margin: 18px auto 0; color: #ff8a8a; font-weight: 600; padding: 10px 16px; border-radius: 10px; }
+    .dlclear:active { background: var(--panel-2); }
+    .appnote .linkbtn { color: var(--accent); font-weight: 700; font-size: 13px; }
+
     .spinner { width: 18px; height: 18px; border: 2px solid #3a3f4a; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .hidden { display: none !important; }
@@ -321,6 +335,8 @@
 </header>
 
 <main>
+  <!-- 받기 진행 한 줄 (어느 화면에서나 맨 위): "받는 중 3/12곡 · 45%" · 실패·쉼 이유 -->
+  <div class="dlline hidden" id="dl-progress"></div>
   <!-- 1) 로그인 -->
   <section class="screen show" id="s-login">
     <div class="hero">
@@ -328,6 +344,7 @@
       <h2 style="margin:0">내 드라이브 음악</h2>
       <p>구글 드라이브에 올려둔 음악 파일을 그대로 들어요. 파일은 어디로도 복사되지 않습니다.</p>
       <button class="primary" id="btn-login">구글로 로그인</button>
+      <div><button class="ghost hidden" id="btn-login-dl" style="margin-top:10px">받아 둔 곡 듣기</button></div>
     </div>
     <div class="notice hidden" id="login-notice"></div>
   </section>
@@ -352,6 +369,11 @@
     <div class="appnote hidden" id="standalone-note">
       <span>뒤에서 듣다 끊기면 사파리 탭으로 열어 보세요</span>
       <button id="standalone-note-x" title="닫기">✕</button>
+    </div>
+    <!-- 오프라인 목록일 때: 인터넷이 없어요 — 받은 곡만 보여요 (돌아오면 [로그인]) -->
+    <div class="appnote hidden" id="offline-note">
+      <span id="offline-text">인터넷이 없어요 — 받은 곡만 보여요</span>
+      <button class="linkbtn hidden" id="btn-offline-login">로그인</button>
     </div>
     <!-- 유일한 메뉴: 보관함 분류 칩 | 플레이리스트 칩 (좁으면 옆으로 밀기) -->
     <div class="kinds" id="lib-kinds">
@@ -381,6 +403,7 @@
       <div class="plhead" id="lib-playbar">
         <button class="chip primary" id="btn-lib-play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>재생</button>
         <button class="chip" id="btn-lib-shuffle"><svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>섞기</button>
+        <button class="chip hidden" id="btn-lib-dl">↓ 받기</button>
       </div>
       <div class="list" id="track-list"></div>
       <!-- 아티스트·앨범·작곡가·장르: 이름 목록, 누르면 그 안의 곡 -->
@@ -438,12 +461,31 @@
     <div class="plhead">
       <button class="chip primary" id="btn-pl-play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>재생</button>
       <button class="chip" id="btn-pl-shuffle"><svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>섞어서</button>
+      <button class="chip" id="btn-pl-dl">↓ 받기</button>
       <button class="chip" id="btn-pl-edit"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm17.71-10.21a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>편집</button>
       <button class="chip hidden" id="btn-pl-rename">이름 바꾸기</button>
       <button class="chip danger hidden" id="btn-pl-delete">삭제</button>
     </div>
     <div class="list" id="pl-tracks"></div>
     <div class="empty hidden" id="pl-tracks-empty">비어 있어요.<br><small>"보관함"에서 곡 오른쪽 ＋ 를 눌러 담으세요.</small></div>
+  </section>
+
+  <!-- 6) 받은 곡 (⚙ → 받은 곡): 폰에 받아 둔 곡 — 용량·남은 자리, 재생/섞기, 곡별 ✕, 전부 지우기 -->
+  <section class="screen" id="s-dl">
+    <div class="sectionhead"><h2>받은 곡</h2><span class="count" id="dl-count"></span></div>
+    <div class="notice dlgone hidden" id="dl-gone">
+      <span id="dl-gone-text"></span>
+      <button id="btn-dl-regain">다시 받기</button>
+      <button id="btn-dl-forget">알림 지우기</button>
+    </div>
+    <div class="dlinfo" id="dl-info"></div>
+    <div class="plhead">
+      <button class="chip primary" id="btn-dl-play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>재생</button>
+      <button class="chip" id="btn-dl-shuffle"><svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>섞기</button>
+    </div>
+    <div class="list" id="dl-list"></div>
+    <div class="empty hidden" id="dl-empty">아직 받은 곡이 없어요.<br><small>곡 ⋯ → ↓ 받기, 또는 앨범·아티스트 안이나 플레이리스트에서 [↓ 받기]</small></div>
+    <button class="dlclear" id="btn-dl-clear">전부 지우기</button>
   </section>
 </main>
 
@@ -515,7 +557,7 @@
 
 <script src="config.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js" integrity="sha512-YsR46MmyChktsyMMou+Bs74oCa/CDdwft7rJ5wlnmDzMj1mzqncsfJamEEf99Nk7IB0JpTMo5hS8rxB49FUktQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://accounts.google.com/gsi/client" async defer onerror="window.dmGsiFailed = true; window.dispatchEvent(new Event('dm-gsi-failed'))"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -8,10 +8,11 @@
 - 작업이 일단락되면 "지금 상태"와 "다음 할 일"을 고쳐라.
 
 ## 구조 (파일 3개가 전부, 빌드 도구 없음)
-- `index.html` — 화면과 스타일(CSS는 이 파일 안에 있음). 홈 화면 앱은 `viewport-fit=cover`+`black-translucent`라 화면이 시계·노치 줄 밑까지 깔림 → 맨 위 `header`는 `--safe-t`(env safe-area-inset-top)만큼, 아래 고정 것들은 `--safe-b`만큼 띄움. 위·아래에 붙는 걸 새로 만들면 이 두 값을 꼭 더할 것. 화면 3개: 로그인 `#s-login`, 폴더 고르기 `#s-folder`, 재생목록 `#s-tracks`. 하단 고정 플레이어 `#player`. 맨 위 오른쪽은 ⚙ `#btn-settings` 하나(설정 메뉴).
+- `index.html` — 화면과 스타일(CSS는 이 파일 안에 있음). 홈 화면 앱은 `viewport-fit=cover`+`black-translucent`라 화면이 시계·노치 줄 밑까지 깔림 → 맨 위 `header`는 `--safe-t`(env safe-area-inset-top)만큼, 아래 고정 것들은 `--safe-b`만큼 띄움. 위·아래에 붙는 걸 새로 만들면 이 두 값을 꼭 더할 것. 화면 3개: 로그인 `#s-login`, 폴더 고르기 `#s-folder`, 재생목록 `#s-tracks`(오프라인 목록도 이 화면) + 하위 화면 `#s-pl`·`#s-tags`·`#s-dl`(받은 곡). `main` 맨 위 `#dl-progress`(받기 진행 한 줄). 하단 고정 플레이어 `#player`. 맨 위 오른쪽은 ⚙ `#btn-settings` 하나(설정 메뉴).
 - `app.js` — 모든 동작. 즉시실행함수 하나 안에 섹션별로 나뉘어 있음: 로그인(토큰) → 드라이브 API → 폴더 화면 → 재생목록 화면 → 재생 순서 → 파일 받기 → 재생 제어 → Media Session → 이벤트 → 시작.
 - `config.js` — 사용자가 손대는 설정 (`CLIENT_ID`, `DEFAULT_FOLDER_NAME` 기본 "Music", `INCLUDE_SUBFOLDERS`). 코드에서는 `window.APP_CONFIG`로 읽음.
 - `icons/`(icon-32·180·192·512.png, 초록 정사각형 + 흰 음표) + `manifest.json` — "홈 화면에 추가"용 앱 아이콘·이름. `index.html` `<head>`에서 연결, 경로는 GitHub Pages 하위 경로 때문에 전부 상대경로. 아이콘을 바꾸면 PNG 네 개를 같이 다시 만들기(`sips`로 SVG→PNG).
+- `sw.js` — **파일 3개 구조의 예외 하나**(2026-11-12): 인터넷 없이 앱을 열게 앱 껍데기(index.html·app.js·config.js·manifest.json·icons·jsmediatags CDN)를 담는 service worker. 이 앱 파일은 "인터넷 먼저, 안 되면 담아 둔 것", CDN은 담아 둔 것 먼저. googleapis.com·accounts.google.com(열쇠가 든 주소)·Range(오디오)·blob: 은 절대 안 가로채고 안 담음. 등록은 app.js init에서 상대경로 `./sw.js`. 껍데기 목록을 바꾸면 `CACHE` 이름(dm-shell-v1)을 올릴 것.
 - `serve.sh` — 로컬 실행 (`python3 -m http.server 8000`). `README.md` — 사용자용 설치·사용 안내(구글 클라이언트 ID 발급 순서 포함).
 
 ## 동작 방식 (바꿀 때 알아둘 것)
@@ -24,7 +25,12 @@
 - 다음 곡 준비: 재생이 시작되면 `afterStart()` → `prefetchNext()`가 `state.nextReady = {id, pos, url, stream}`. 열쇠가 "지금 곡 남은 시간 + 다음 곡(모르면 `NEXT_GUESS` 10분)"보다 짧으면 화면이 앞일 때만 `requestToken("")`. `scheduleTokenRefresh()`가 앞에 있을 때 끝나기 5분 전(`TOKEN_EARLY`) 조용히 새 열쇠. `ended`·`next()`는 먼저 `playReady()` — 준비된 곡이 지금 순서의 다음(id·pos)이면 `el.audio.src = url` → `play()`를 기다림 없이, 화면·`saveQueue()`·잠금화면 정보는 그 뒤. 아니면 `playCurrent()`. `rebuildOrder`·`setQueue`·`playCurrent`가 `nextReady`를 버리고 `toggleShuffle`·`cycleRepeat`·`refreshLibrary`·visible 이 `renewNext()`로 다시.
 - 잠금화면: 버튼은 `setupMediaSession()`(init에서 한 번), ▶ = `togglePlay("play")`(주소 없거나 열쇠 끝났으면 `stale` → 다시 걸기), ⏸ = `wantPlay` 끔. `updateMediaSession()`은 곡 정보만. `playbackState`는 play·pause 이벤트, `syncPosition()`이 `setPositionState`(try).
 - 이어 듣기: `state.wantPlay`(playing에서 켬, ⏸·잠금화면 ⏸·`stopPlayback`·큐 끝에서 끔, 시스템 pause는 그대로). `saveResume()`이 5초마다·pause·hidden·pagehide 때 `dm:resume` = {folderId, id, at, playing}. visible·pageshow·`tokenLost` 때 `checkResume()` → 하단 `#btn-resume`(▶ 이어 듣기) → `resumeNow()`: 주소가 살아 있으면 `play()`만, 아니면 `togglePlay("play", at)`(await 없이 열쇠 요청 → `playCurrent(at)`). 다시 열면 `setLibrary`가 dm:resume을 보고 단추·▶가 그 초부터. 홈 화면 아이콘(standalone)일 때만 `#standalone-note` "사파리 탭으로…" 한 줄(✕ → `dm:standalonenote`). 시험 `python3 tests/check_background.py`.
-- 기억: `localStorage` 키 `dm:folder`, `dm:last:<folderId>`, `dm:shuffle`, `dm:repeat`, `dm:lib:<folderId>`(곡 목록 캐시), `dm:resume`(듣던 곡 ID·초), `dm:standalonenote`.
+- 기억: `localStorage` 키 `dm:folder`, `dm:last:<folderId>`, `dm:shuffle`, `dm:repeat`, `dm:lib:<folderId>`(곡 목록 캐시), `dm:resume`(듣던 곡 ID·초), `dm:standalonenote`, `dm:dl`(다 받은 곡 ID — 저장소가 지워졌는지 견줌), `dm:dlqueue`(받을 차례 곡 ID), `dm:dldel`(듣던 중이라 미뤄 둔 지우기). 로그아웃해도 `dm:dl*`·IndexedDB는 안 지움.
+- 받아 두기(app.js "받아 두기" 섹션, "파일 받아오기" 앞): IndexedDB `drive-music-dl` 하나에 칸 둘 — `tracks`(keyPath id: `{id,name,size,mimeType,folderName,folderId,got,parts,done,at,tags}`), `chunks`(키 `[곡ID, 순번]` → Blob). `enqueueDl(tracks)` = 안 받은 곡만 → `dlFileInfo`(크기·종류 모르면 드라이브에 물음) → **자리 확인 먼저**(`dlSpaceLeft()` = storage.estimate, 크기 합×1.05 > 남은 자리면 `showNoSpace` 시트, 안 받음) → 곡 정보 put → `state.dlQueue` → `pumpDl()`. `askPersist()`가 처음 받기 때 `navigator.storage.persist()`(결과 `state.dlPersisted`). `pumpDl`은 하나만(`dlRunning`), 맨 앞 곡을 `fetchBytes(id, got, end)`(태그 읽기와 같은 Range 길) `DL_CHUNK` 3MB씩, 조각마다 `dlPutChunk`(조각+got 한 트랜잭션) → 끊겨도 got부터 이어 받기. 인터넷 없음·(열쇠 끝남 + 뒤에 있음/로그인 안 함)이면 쉼(`dlLine` 글로) → init·`online`·visible·`afterLogin`에서 다시. 실패는 `dlFail`(진행 줄 빨강·토스트·console.warn, 줄에 남김; 404·403만 뺌). 진행 한 줄 `#dl-progress`(main 맨 위, 모든 화면). 표시: `trackRow`의 `.dlmark`(`dlMark`: ↓ / %), 칩 `#btn-lib-dl`(`#lib-playbar` 안, 묶음 안에서만 보임)·`#btn-pl-dl`(`#s-pl` 머리) = `paintDlChip`("↓ 받기"/"✓ 받음"), 곡 ⋯ 메뉴 "↓ 받기 / 받기 멈추고 빼기 / 받은 곡 지우기". IndexedDB를 못 열면 `state.dlOk=false` → 단추 끄고 `DL_NO` "이 브라우저에선 받아 두기를 못 해요"(몰래 다른 방식 안 씀).
+- 받은 곡 틀기: `fetchTrackUrl()` 첫 갈래 `if (isDl(id)) return dlUrlOf(t)` — 조각으로 Blob → `blob:` 주소, `state.dlUrls`(**`state.blobUrls`와 따로** → `trimBlobs`·`setLibrary`·`refreshLibrary`가 안 지움). 조각이 모자라면 `dlLost` → "사라짐", 인터넷 있으면 바로 듣기로 틀고 `state.dlGoneNote` → `afterStart`가 "받은 곡이 지워져 드라이브에서 틀어요". `prefetchNext`는 다음 곡이 받은 곡이면 열쇠 계산 없이 `nextReady = {…, dl: true}`, `playReady`는 `r.dl`이면 `state.dlUrls` 주소(await·fetch 없음 그대로). `togglePlay`·오디오 `error`는 받은 곡을 열쇠 문제로 안 봄(`isDl`·`dlSrc`). `loadArt`는 받은 곡 Blob에서 표지.
+- 사라짐: `loadDl()`(init에서 한 번)이 `dm:dl`과 IndexedDB를 견줘 `state.dlGone` → 토스트 `DL_GONE_MSG` "받은 곡이 지워졌어요 — 다시 받기"(+`regainDl`) + `#s-dl` 맨 위 `#dl-gone`.
+- 받은 곡 화면 `#s-dl`(⚙ → "받은 곡", 작은 글씨 `dlMenuSub()` = N곡 · 용량 · 안 지워짐/사파리가 지울 수 있음): 하위 화면(`show()`의 sub, 주소 `#dl`, ←·로고·popstate = `closeDlScreen()` → 곡 목록/오프라인 목록, 둘 다 없으면 폴더 고르기·로그인). `renderDl()`: 총 용량·남은 자리·지워질 수 있음 → `.plhead` [▶ 재생][⇄ 섞기] = `playDl()` → `setQueue({type:"offline"})`(하단 "♪ 받은 곡") → 곡 줄(크기·✕ `dlRemove`) → [전부 지우기] `confirmDlClear()`(빨간 ok.fn 안에서만 `dlClearAll()`). 듣는 중인 곡을 지우면 `dlPending`에 두고 오디오 `loadstart` 때 `flushDlPending()`이 저장소에서 지움.
+- 오프라인: init에서 `navigator.onLine === false` 또는 구글 스크립트 onerror(`window.dmGsiFailed`, 이벤트 `dm-gsi-failed`)인데 받은 곡이 있으면 `startOffline("net")` — `#s-tracks` 그대로, `state.folder = null`, `state.offline = true`, 보관함 = 받은 곡(`dlTrackOf`, 태그는 tagDb 사본 → 받을 때 사본, `keepTags`), 플레이리스트는 localStorage 사본에서 받은 곡만(`plItemsToTracks` 필터), `#offline-note` "인터넷이 없어요 — 받은 곡만 보여요". 받은 곡이 없으면 로그인 화면에 "인터넷이 없어요. 받아 둔 곡이 없어서 틀 게 없어요". 로그인 화면 `#btn-login-dl` "받아 둔 곡 N곡 듣기 (로그인 없이)" → `startOffline("nologin")`. 쓰다가 `offline` 이벤트 → `goOffline()`(`state.onlineLib`에 감추고 `refreshLibrary(받은 곡만)`, 큐에서도 안 받은 곡 뺌), `online` → `goOnline()`(되돌림; 오프라인으로 시작했으면 구글 창 안 띄우고 `#btn-offline-login` [로그인] → `loginFromOffline()`, 구글 스크립트가 없으면 새로 열기). 오프라인에선 드라이브에 쓰는 일을 막음: `offlineBlock()`(태그 고치기·합치기·이름 바꾸기·되돌리기·다시 읽기·태그 목록 편집·플레이리스트 만들기/담기/빼기/이름/삭제/편집·♥). 로고는 오프라인 목록에서도 맨 위로(`goHome`이 `state.folder` 없다고 막지 않음). 시험 `python3 tests/check_offline.py`.
 - 섞기는 `state.order`(인덱스 배열)만 섞고 `state.tracks`는 그대로 둠. 현재 곡 위치는 `state.pos`(order 기준).
 - 곡 출처 두 가지: `state.library`(폴더 전체 곡)와 `state.playlists`. 실제 재생 큐는 `state.tracks` + `state.source`(`{type:"library"}` 또는 `{type:"playlist", name}`)이고, `setQueue()`로 바꿈. 폴더 새로고침은 라이브러리만 갈고 플레이리스트 재생 중이면 큐를 건드리지 않음.
 - 플레이리스트 저장: 드라이브 루트의 `drive-music-playlists.md`(상수 `PL_FILE`). `serializePlaylists`/`parsePlaylists`가 `## 이름` + `- 제목 | 파일ID | 폴더` 형식을 읽고 씀. 바꾸면 `savePlaylists()` → localStorage 즉시 + 1.2초 뒤 `flushPlaylists()`로 드라이브 업로드(처음엔 multipart 생성, 이후 PATCH media). 이 때문에 scope에 `drive.file` 추가됨. `즐겨찾기`(상수 `FAV`)는 ♥ 버튼용 기본 플레이리스트.
@@ -77,13 +83,14 @@
 | playlists.md / library.md 저장 | app.js "플레이리스트: 드라이브의 .md", "보관함: 곡 태그를" |
 | 태그 읽기(Range) | app.js "음악 태그 읽기" |
 | 재생·다음 곡·잠금화면 | app.js "파일 받아오기", "재생 제어", "Media Session" |
+| 받아 두기·받은 곡 화면·오프라인 | app.js "받아 두기", "오프라인", `sw.js` |
 | 화면 모양·CSS | `index.html` (해당 `#아이디` 로 grep) |
 | 설정값 | `config.js` |
 
 열지 말 것: `icons/*.png` (그림).
 
 ## 폴더 지도 (위 "구조"에 없는 것만)
-- `tests/check_queue_sheet.py`, `tests/check_settings_menu.py`, `tests/check_playback.py`, `tests/check_wayfinding.py`, `tests/check_background.py` — app.js·index.html 글을 정규식으로 훑는 자동 검사 (브라우저 없이).
+- `tests/check_queue_sheet.py`, `tests/check_settings_menu.py`, `tests/check_playback.py`, `tests/check_wayfinding.py`, `tests/check_background.py`, `tests/check_offline.py` — app.js·index.html(·sw.js) 글을 정규식으로 훑는 자동 검사 (브라우저 없이).
 - `진행.md` — 지금 상태·정한 것·다음 할 일.
 
 ## 다른 프로젝트와의 연결
