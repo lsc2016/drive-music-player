@@ -190,3 +190,14 @@ GitHub 저장소 페이지 → **Settings → Pages → Branch: main / (root) �
 
 - `DEFAULT_FOLDER_NAME`: 로그인하자마자 열 폴더 이름. 기본값 `"Music"` (대소문자 상관없이 이름이 딱 그것인 폴더, 여러 개면 가장 최근 것). `""`로 비우면 항상 폴더 고르기 화면부터
 - `INCLUDE_SUBFOLDERS`: 하위 폴더까지 뒤질지 (`true` / `false`)
+
+
+## k12 판
+
+k12에서 `MUSIC_ROOT`에 음악 폴더를 지정하고 `HOST=127.0.0.1 PORT=8520 python3 server/k12_server.py`로 실행합니다. MUSIC_ROOT가 없으면 `~/.config/board/paths.env`의 값을 읽으며 폴더가 없으면 오류로 종료합니다. 운영 연결이 `100.108.33.65:8520`을 향하면 `HOST=100.108.33.65`로 실행하거나 Tailscale serve 대상을 127.0.0.1로 정합니다. 인증이 없는 서버이므로 Tailscale 안에서만 열어야 합니다.
+
+아이폰에서 Tailscale https 주소로 열고 원하는 곡을 받아 둔 뒤 비행기 모드에서 앱을 다시 열어 들을 수 있습니다. k12 주소의 저장소는 구글 판과 별개이므로 곡을 다시 받아야 합니다. 플레이리스트, ♥, 태그 고치기는 아직 지원하지 않습니다.
+
+### 자주 나오는 문제: k12 에 닿지 않아요
+
+Tailscale 연결과 서버 상태를 확인하고 다시 연결을 누르세요. 연결할 수 없어도 받아 둔 곡은 들을 수 있습니다. 오프라인 앱 설치와 재실행은 HTTPS 또는 localhost에서만 동작합니다.

@@ -8,7 +8,7 @@
  *  - 오디오는 안 거침: 받은 곡은 blob: 주소라 여기로 안 옴, Range 요청(바로 듣기)도 그냥 보냄
  * 경로는 전부 상대경로 (GitHub Pages 하위 경로 /drive-music-player/ 에서도 그 폴더 안만)
  */
-const CACHE = "dm-shell-v1";
+const CACHE = "dm-shell-v2";
 const SHELL = [
   "./", "./index.html", "./app.js", "./config.js", "./manifest.json",
   "./icons/icon-32.png", "./icons/icon-180.png", "./icons/icon-192.png", "./icons/icon-512.png",
@@ -40,6 +40,7 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
+  if (url.origin === self.location.origin && url.pathname.includes('/api/')) return;
   if (isGoogle(url)) return;                  // 구글 요청: 가로채지도 담지도 않음
   if (req.headers.has("range")) return;       // 오디오 Range 요청은 브라우저가 직접
   if (url.protocol !== "https:" && url.protocol !== "http:") return;   // blob: 등

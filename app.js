@@ -6,6 +6,8 @@
 (() => {
   "use strict";
 
+  const K12 = document.querySelector('meta[name="dm-source"]')?.content === "k12";
+  const k12Url = (id) => "./api/file/" + id.split("/").map(encodeURIComponent).join("/");
   const CFG = window.APP_CONFIG || {};
   // drive.readonly: 음악 읽기 / drive.file: 이 앱이 만든 파일(플레이리스트 .md)만 쓰기
   const SCOPE = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file";
@@ -199,6 +201,7 @@
   // 오프라인 목록에선 드라이브에 쓰는 일(태그 고치기·플레이리스트 고치기)을 막음 — 나중에 올리면 드라이브 것과 엇갈려서
   const OFFLINE_NO_EDIT = "인터넷이 없어 지금은 못 고쳐요 — 받은 곡 듣기만 돼요";
   function offlineBlock() {
+    if (K12) { toast("k12 판에선 다음 단계에서 돼요"); return true; }
     if (!state.offline) return false;
     toast(OFFLINE_NO_EDIT);
     return true;
@@ -1176,6 +1179,12 @@
 
   // 상단 ⚙ 설정 메뉴: 폴더 바꾸기, 새로고침, 태그 전부 다시 읽기, 로그아웃(한 번 더 물어봄)
   function openSettingsMenu() {
+    if (K12) {
+      const body = document.createElement("div");
+      body.appendChild(menuRow("곡 목록 새로고침", "k12에서 목록 다시 읽기", () => { closeMSheet(); openK12(); }));
+      body.appendChild(menuRow("받은 곡", dlMenuSub(), () => { closeMSheet(); openDlScreen(); }));
+      openMSheet({ title: "설정", body }); return;
+    }
     const onTracks = el.sTracks.classList.contains("show") && !!state.folder && !state.offline;   // 새로고침 두 줄은 곡 목록 화면에서만
     const body = document.createElement("div");
     body.style.cssText = "display:flex;flex-direction:column;gap:6px";
@@ -1337,6 +1346,7 @@
     el.viewPl.classList.toggle("hidden", which !== "pl");
     store.set("tab", which);
     markKindChips();
+    if (which === "pl" && K12) { el.plList.replaceChildren(); el.plEmpty.textContent = "k12 판에선 다음 단계에서 돼요"; el.plEmpty.classList.remove("hidden"); return; }
     if (which === "pl") renderPlaylistList();
   }
   // 칩 줄에서 켜진 칩: 플레이리스트를 보는 중이면 "플레이리스트", 아니면 보관함 분류
@@ -1401,6 +1411,7 @@
     state.plSaveTimer = setTimeout(flushPlaylists, 1200);  // 연달아 고칠 때 한 번만 올림
   }
   async function flushPlaylists() {
+    if (K12) return;
     if (!state.plDirty) return;
     state.plDirty = false;
     try {
@@ -1440,6 +1451,7 @@
 
   // 드라이브에 .md 파일 올리기: 처음엔 새로 만들고(multipart), 그다음부턴 내용만 바꿈(PATCH)
   async function uploadMd(fileId, name, body) {
+    if (K12) return null;
     if (fileId) {
       await driveFetch(`/files/${fileId}`, { uploadType: "media" },
         { method: "PATCH", upload: true, headers: { "Content-Type": "text/markdown" }, body });
@@ -1494,6 +1506,7 @@
     tagDbLoading = (async () => {
       // 이 기기에 남은 복사본 먼저, 드라이브 것이 있으면 덮어씀
       for (const [id, e] of Object.entries(store.get("library", {}))) if (e && e.tags) state.tagDb.set(id, e);
+      if (K12) return;
       try {
         const res = await driveFetch("/files", {
           q: `name = '${LIB_FILE}' and trashed = false`, fields: "files(id)", spaces: "drive", pageSize: "1", orderBy: "modifiedTime desc",
@@ -1514,6 +1527,7 @@
   }
 
   async function flushLibrary() {
+    if (K12) { const obj = {}; for (const [id, e] of state.tagDb) obj[id] = e; store.set("library", obj); state.libDirty = false; return; }
     if (state.libSaving) { state.libAgain = true; return; }   // 올리는 중이면 끝난 뒤 한 번 더
     if (!state.libDirty) return;
     state.libSaving = true; state.libDirty = false;
@@ -1758,7 +1772,8 @@
   // 파일의 [start, end] 바이트만 받기. start < 0 이면 끝에서부터
   async function fetchBytes(id, start, end) {
     const range = start < 0 ? `bytes=${start}` : `bytes=${start}-${end}`;
-    const res = await driveFetch(`/files/${id}`, { alt: "media", supportsAllDrives: "true" }, { headers: { Range: range } });
+    const res = K12 ? await fetch(k12Url(id), { headers: { Range: range } }) : await driveFetch(`/files/${id}`, { alt: "media", supportsAllDrives: "true" }, { headers: { Range: range } });
+    if (!res.ok) { const err = new Error("곡을 받지 못했어요"); err.status = res.status; throw err; }
     if (res.status === 206) return new Uint8Array(await res.arrayBuffer());
     // 서버가 일부만 주지 않고 통째로 보내는 경우 — 필요한 만큼만 읽고 끊음
     if (start < 0 || !res.body) { const all = new Uint8Array(await res.arrayBuffer()); return start < 0 ? all.slice(start) : all.slice(start, end + 1); }
@@ -2224,6 +2239,7 @@
   }
   // 크기·종류를 모르는 곡(다른 폴더 곡·다시 받기)은 드라이브에 한 번 물어봄
   async function dlFileInfo(t) {
+    if (K12) return t;
     if (Number(t.size) > 0 && t.mimeType && t.mimeType !== "audio/" && /\.[^.]+$/.test(t.name || "")) return t;
     const res = await driveFetch(`/files/${encodeURIComponent(t.id)}`, { fields: "id, name, size, mimeType", supportsAllDrives: "true" });
     const f = await res.json();
@@ -2298,7 +2314,7 @@
         if (!m || m.done) { state.dlQueue.shift(); saveDlQueue(); continue; }
         const left = state.dlQueue.length;
         if (!navigator.onLine) { dlLine(`인터넷이 없어 받기를 쉬어요 — ${left}곡 남음 (인터넷이 돌아오면 이어 받아요)`); return; }
-        if (!tokenValid() && (!state.token || document.visibilityState !== "visible")) {
+        if (!K12) if (!tokenValid() && (!state.token || document.visibilityState !== "visible")) {
           dlLine(state.token ? `받기 쉼 — 앱을 다시 열면 이어 받아요 (${left}곡 남음)` : `받기 쉼 — 로그인하면 이어 받아요 (${left}곡 남음)`);
           return;
         }
@@ -2511,6 +2527,7 @@
   }
   // 인터넷이 돌아옴: 쓰다 끊긴 거면 원래 목록으로. 오프라인으로 시작했으면 구글 창을 저절로 띄우지 않고 [로그인] 단추만
   function goOnline() {
+    if (K12) { openK12(); return; }
     if (!state.offline) { pumpDl(); return; }
     if (state.onlineLib) {
       const lib = state.onlineLib;
@@ -2526,6 +2543,7 @@
     setOfflineNote("back");
   }
   function loginFromOffline() {
+    if (K12) { openK12(); return; }
     if (!navigator.onLine) { toast("아직 인터넷이 없어요"); return; }
     if (!window.google || !google.accounts) { location.reload(); return; }   // 구글 스크립트를 못 받은 채 연 앱 → 새로 열기
     state.offline = false; setOfflineNote("");
@@ -2559,6 +2577,7 @@
       state.dlGoneNote = track.id;
       return fetchTrackUrl(track, { whole });
     });
+    if (K12) return k12Url(track.id);
     if (state.blobUrls.has(track.id)) {
       const u = state.blobUrls.get(track.id);
       state.blobUrls.delete(track.id); state.blobUrls.set(track.id, u);   // 다시 쓴 곡은 "최근"으로
@@ -2608,6 +2627,7 @@
       else dlUrlOf(t).then((href) => ready(href, false, true)).catch(() => {});
       return;
     }
+    if (K12) { ready(k12Url(t.id), true); return; }
     if (state.blobUrls.has(t.id)) { ready(state.blobUrls.get(t.id), false); return; }
     if (state.streamOff) {   // 통째 받기(대체됨): 예전처럼 미리 받아 둠
       if (!fetching.has(t.id)) fetchTrackUrl(t, { whole: true }).then((u) => ready(u, false)).catch(() => {});
@@ -2684,7 +2704,7 @@
   function afterStart(t, url) {
     state.failRun = 0;
     if (state.fallbackNote) { state.fallbackNote = false; el.npSub.textContent = FALLBACK_MSG; toast(FALLBACK_MSG); }
-    if (state.dlGoneNote === t.id) { state.dlGoneNote = null; el.npSub.textContent = DL_GONE_PLAY; toast(DL_GONE_PLAY, { label: "다시 받기", fn: regainDl }); }
+    if (state.dlGoneNote === t.id) { state.dlGoneNote = null; el.npSub.textContent = DL_GONE_PLAY; if (K12) el.npSub.textContent = "받은 곡이 지워져 k12 에서 틀어요"; toast(K12 ? "받은 곡이 지워져 k12 에서 틀어요" : DL_GONE_PLAY, { label: "다시 받기", fn: regainDl }); }
     prefetchNext();
     loadArt(t, url).then((art) => { if (art && currentTrack() === t) { showArt(art); updateMediaSession(t, art); } });
   }
@@ -2829,7 +2849,7 @@
     //  받는 중(멈춘 요청)이 있어도 창을 한 번 더 띄우고, 답은 같은 약속으로 와서 기다리던 곳이 다 풀림
     const needFile = !cur || !el.audio.src || state.audioFor !== cur.id || stale;
     //  받은 곡은 열쇠 문제로 보지 않음 (인터넷·열쇠 없이 틂)
-    if (needFile && !tokenValid() && !(cur && (state.blobUrls.has(cur.id) || isDl(cur.id)))) {
+    if (!K12) if (needFile && !tokenValid() && !(cur && (state.blobUrls.has(cur.id) || isDl(cur.id)))) {
       state.tokenLost = false;
       requestToken("", { again: true }).catch(() => {});
     }
@@ -2952,7 +2972,7 @@
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") { saveResume(); return; }
     checkResume();
-    scheduleTokenRefresh();   // 뒤에 있던 동안 못 받은 열쇠를 앞에서 다시
+    if (!K12) scheduleTokenRefresh();   // 뒤에 있던 동안 못 받은 열쇠를 앞에서 다시
     renewNext();              // 새 열쇠로 다음 곡 주소도
     pumpDl();                 // 뒤에서 쉬던 받기를 이어서
   });
@@ -3002,7 +3022,7 @@
     // 바로 듣기 주소로 시작도 못 함(loadedmetadata 전 오류) + 열쇠는 멀쩡 → 구글이 주소 속 열쇠를 안 받는 것.
     //  이번 접속 동안 통째로 받기로 바꾸고(대체됨) 이 곡을 다시. 조용히 넘기지 않고 화면·console 에 표시 (주소는 안 적음)
     //  (이번 접속에서 바로 듣기가 한 번이라도 됐으면 이 파일만의 문제 → 바꾸지 않고 아래 길로)
-    if (stream && state.metaOk !== src && tokenValid() && !state.streamOff && !state.streamWorked) {
+    if (!K12) if (stream && state.metaOk !== src && tokenValid() && !state.streamOff && !state.streamWorked) {
       state.streamOff = true; state.fallbackNote = true;
       console.warn("[Drive Music] 바로 듣기 주소로 재생하지 못해 통째 받기로 바꿈 (대체됨) — 오류 코드", code);
       el.npSub.textContent = FALLBACK_MSG;
@@ -3012,7 +3032,7 @@
     // 바로 듣기 주소면 듣는 중 오류(아이폰이 다시 받다 열쇠가 끝나 401 등)도 "주소를 잃음" — 새 열쇠로 그 자리부터 한 번
     //  받은 곡 주소(dlUrls)가 멀쩡히 걸려 있으면 열쇠 문제가 아님 → 잃음으로 치지 않음
     const dlSrc = !!src && state.dlUrls.get(t.id) === src;
-    const lost = !src || state.audioFor !== t.id || (stream ? true : state.blobUrls.get(t.id) !== src && !dlSrc) || code === 2;
+    const lost = K12 || !src || state.audioFor !== t.id || (stream ? true : state.blobUrls.get(t.id) !== src && !dlSrc) || code === 2;
     if (lost && state.retryId !== t.id) {
       state.retryId = t.id;
       const at = el.audio.currentTime || 0;
@@ -3185,6 +3205,26 @@
     else if (e.code === "ArrowLeft") el.audio.currentTime -= 10;
   });
 
+  async function openK12() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch("./api/tracks", { signal: controller.signal, cache: "no-store" });
+      if (!response.ok) throw new Error("k12 연결 실패");
+      const data = await response.json();
+      if (!Array.isArray(data.tracks)) throw new Error("곡 목록 오류");
+      state.offline = false; state.onlineLib = null; state.folder = { id: "k12", name: "k12" };
+      setOfflineNote(""); notice(""); await loadTagDb();
+      show(el.sTracks); el.hdrSub.textContent = "k12"; el.tracksTitle.textContent = "k12";
+      showTab("lib"); setLibrary(data.tracks.map((t) => ({ ...t, title: stripExt(t.name) })));
+      scanTags(); pumpDl();
+    } catch (e) {
+      await loadDl();
+      if (dlDoneList().length) { startOffline("k12"); el.offlineText.textContent = "k12 에 닿지 않아요 — 받은 곡만 보여요"; el.btnOfflineLogin.classList.remove("hidden"); }
+      else { show(el.sLogin); notice("k12 에 닿지 않아요. 받아 둔 곡이 없어서 틀 게 없어요"); el.btnLogin.classList.add("hidden"); el.btnLoginDl.textContent = "다시 연결"; el.btnLoginDl.classList.remove("hidden"); }
+    } finally { clearTimeout(timer); }
+  }
+
   // ── 시작 ──────────────────────────────────────────────────
   (function init() {
     // 새로 열면 늘 해시 없는 주소에서 시작 (#pl 등이 남아 있어도 로그인·첫 화면이 깨지지 않게)
@@ -3200,6 +3240,11 @@
     if ("serviceWorker" in navigator && location.protocol !== "file:")
       navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("[Drive Music] 오프라인 껍데기(sw.js) 등록 실패", e && e.message));
 
+    if (K12) {
+      el.btnLogin.classList.add("hidden"); el.btnOfflineLogin.textContent = "다시 연결";
+      el.btnLoginDl.textContent = "다시 연결"; el.btnLoginDl.classList.remove("hidden"); el.btnLoginDl.onclick = openK12;
+      loadDl().then(openK12); return;
+    }
     try { state.token = JSON.parse(sessionStorage.getItem("dm:token") || "null"); } catch {}
     // 인터넷이 없거나 구글 로그인 스크립트를 못 받았으면 로그인 대신 오프라인 목록(받은 곡이 있을 때) — 아래 loadDl 뒤에
     const noNet = () => navigator.onLine === false || !!window.dmGsiFailed;
