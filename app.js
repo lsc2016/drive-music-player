@@ -29,7 +29,7 @@
     sLogin: $("s-login"), sFolder: $("s-folder"), sTracks: $("s-tracks"), sPl: $("s-pl"), sTags: $("s-tags"), sDl: $("s-dl"),
     dlProgress: $("dl-progress"), dlCount: $("dl-count"), dlInfo: $("dl-info"), dlGone: $("dl-gone"), dlGoneText: $("dl-gone-text"),
     btnDlRegain: $("btn-dl-regain"), btnDlForget: $("btn-dl-forget"), btnDlPlay: $("btn-dl-play"), btnDlShuffle: $("btn-dl-shuffle"),
-    dlList: $("dl-list"), dlEmpty: $("dl-empty"), btnDlClear: $("btn-dl-clear"), btnLibDl: $("btn-lib-dl"), btnPlDl: $("btn-pl-dl"),
+    dlList: $("dl-list"), dlEmpty: $("dl-empty"), btnDlClear: $("btn-dl-clear"), btnLibDl: $("btn-lib-dl"), btnPlDl: $("btn-pl-dl"), btnPlAuto: $("btn-pl-auto"),
     offlineNote: $("offline-note"), offlineText: $("offline-text"), btnOfflineLogin: $("btn-offline-login"), btnLoginDl: $("btn-login-dl"),
     tagKinds: $("tag-kinds"), tagsQ: $("tags-q"), tagList: $("tag-list"), tagsCount: $("tags-count"),
     viewLib: $("view-lib"), viewPl: $("view-pl"),
@@ -1184,6 +1184,7 @@
       const body = document.createElement("div");
       body.appendChild(menuRow("곡 목록 새로고침", "k12에서 목록 다시 읽기", () => { closeMSheet(); openK12(); }));
       body.appendChild(menuRow("받은 곡", dlMenuSub(), () => { closeMSheet(); openDlScreen(); }));
+      body.appendChild(menuRow("저절로 받기", store.get("autodlnet", "wifi") === "any" ? "셀룰러에서도" : "와이파이에서만", () => { store.set("autodlnet", store.get("autodlnet", "wifi") === "any" ? "wifi" : "any"); autoOverride = false; closeMSheet(); openSettingsMenu(); autoDlSync(); pumpDl(); }));
       openMSheet({ title: "설정", body }); return;
     }
     const onTracks = el.sTracks.classList.contains("show") && !!state.folder && !state.offline;   // 새로고침 두 줄은 곡 목록 화면에서만
@@ -1390,7 +1391,7 @@
       if (!r.ok) throw new Error("플레이리스트 읽기 실패");
       state.plVer = r.headers.get("ETag"); state.playlists = parsePlaylists(await r.text());
       store.set("playlists", state.playlists); el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
-      if (plShown()) renderPlaylistList(); if (state.openPl) renderPlaylistDetail(); updateFavUI(); return;
+      if (plShown()) renderPlaylistList(); if (state.openPl) renderPlaylistDetail(); updateFavUI(); autoDlSync(); return;
     }
     const res = await driveFetch("/files", {
       q: `name = '${PL_FILE}' and trashed = false`, fields: "files(id, name, modifiedTime)", spaces: "drive", pageSize: "1", orderBy: "modifiedTime desc",
@@ -1439,6 +1440,7 @@
         state.plVer = e.version; state.playlists = parsePlaylists(e.content); state.plDirty = false;
         store.set("playlists", state.playlists); renderPlaylistList(); if (state.openPl) renderPlaylistDetail(); updateFavUI();
         el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
+        autoDlSync();
         toast("다른 기기에서 먼저 고쳐서 그걸 불러왔어요 — 방금 고친 건 다시 해 주세요"); return;
       }
       state.plDirty = true;
@@ -1619,7 +1621,7 @@
     if (!p) return;
     if (p.items.some((it) => it.id === t.id)) return;
     p.items.push({ id: t.id, title: dispTitle(t), folderName: t.folderName || "" });
-    savePlaylists();
+    savePlaylists(); autoDlSync();
   }
   function removeFromPlaylist(name, id) {
     if (offlineBlock()) return;
@@ -1648,7 +1650,7 @@
       b.innerHTML = `<div class="ic ${isFav ? "fav" : "pl"}">${isFav ? SVG_HEART : SVG_PL}</div>
         <div class="t"><div class="n"></div><div class="s"></div></div>`;
       b.querySelector(".n").textContent = p.name;
-      b.querySelector(".s").textContent = `${state.offline ? plItemsToTracks(p).length : p.items.length}곡` + (state.offline ? " 받음" : "") + (state.source.type === "playlist" && state.source.name === p.name ? " · 재생 중" : "");
+      b.querySelector(".s").textContent = `${state.offline ? plItemsToTracks(p).length : p.items.length}곡` + (state.offline ? " 받음" : "") + (K12 && autoNames().includes(p.name) ? " · 늘 받아 둠" : "") + (state.source.type === "playlist" && state.source.name === p.name ? " · 재생 중" : "");
       b.onclick = () => openPlaylist(p.name);
       el.plList.appendChild(b);
     }
@@ -1678,6 +1680,9 @@
     el.plTitle.textContent = p.name;
     el.plCount.textContent = tracks.length ? `${tracks.length}곡${state.offline ? " 받음" : ""}` : "";
     el.plTracksEmpty.classList.toggle("hidden", tracks.length > 0);
+    el.btnPlAuto.classList.toggle("hidden", !K12);
+    const autoOn = K12 && autoNames().includes(p.name);
+    el.btnPlAuto.classList.toggle("on", autoOn); el.btnPlAuto.textContent = autoOn ? "✓ 늘 받아 두기" : "늘 받아 두기";
     paintDlChip(el.btnPlDl, tracks);   // [↓ 받기] — 이 플레이리스트에서 아직 안 받은 곡만 줄에
     el.sPl.classList.toggle("editing", state.plEditing);
     el.btnPlEdit.classList.toggle("on", state.plEditing);
@@ -1719,6 +1724,7 @@
     const name = (prompt("새 이름", p.name) || "").trim();
     if (!name || name === p.name) return;
     if (getPl(name)) { toast("같은 이름이 이미 있어요"); return; }
+    if (K12) store.set("autodl", autoNames().map((n) => n === p.name ? name : n)); // dm:autodl
     p.name = name; state.openPl = name;
     if (state.source.type === "playlist") state.source.name = name;
     savePlaylists(); renderPlaylistDetail();
@@ -1727,6 +1733,7 @@
     if (offlineBlock()) return;
     const p = getPl(state.openPl); if (!p) return;
     if (!confirm(`"${p.name}" 플레이리스트를 지울까요? (곡 파일은 그대로 남아요)`)) return;
+    if (K12) { store.set("autodl", autoNames().filter((n) => n !== p.name)); cancelAutoDl(); } // dm:autodl
     state.playlists = state.playlists.filter((x) => x !== p);
     if (state.source.type === "playlist" && state.source.name === p.name) setQueue({ type: "library" }, state.library);
     savePlaylists(); closePlaylist();
@@ -2091,6 +2098,56 @@
   const saveDlQueue = () => store.set("dlqueue", state.dlQueue);
   const saveDlList = () => store.set("dl", [...new Set([...dlDoneList().map((m) => m.id), ...state.dlGone])]);
   const dlPending = new Map();   // 듣는 중에 지운 곡: id -> 그 blob 주소 (곡이 바뀌면 저장소에서 지움)
+  // dm:autodl: 이 기기에서 켠 플레이리스트 이름; dm:autodlnet: wifi 또는 any
+  const autoNames = () => { const names = store.get("autodl", []); return Array.isArray(names) ? names : []; };
+  let autoOverride = false, autoSpaceWarned = false, autoSyncRunning = false, autoSyncAgain = false;
+  function autoNetOk() {
+    if (store.get("autodlnet", "wifi") === "any") return true;
+    const type = navigator.connection && navigator.connection.type;
+    return type === "wifi" || type === "ethernet";
+  }
+  function autoDlTargets() {
+    const names = autoNames(); // dm:autodl
+    return state.playlists.filter((p) => names.includes(p.name)).flatMap(plItemsToTracks)
+      .filter((t) => !isDl(t.id) && !state.dlQueue.includes(t.id) && !dlPending.has(t.id));
+  }
+  async function autoDlSync() {
+    if (!K12 || state.offline || !navigator.onLine || !state.folder || state.folder.id !== "k12") return;
+    if (autoSyncRunning) { autoSyncAgain = true; return; }
+    autoSyncRunning = true;
+    try {
+      do {
+        autoSyncAgain = false;
+        await loadDl();
+        const targets = autoDlTargets();
+        if (!autoNetOk()) autoOverride = false;
+        if (targets.length) await enqueueDl(targets, {auto: true});
+      } while (autoSyncAgain);
+    } finally { autoSyncRunning = false; }
+  }
+  async function cancelAutoDl() {
+    const names = autoNames();
+    const keep = new Set(state.playlists.filter((p) => names.includes(p.name)).flatMap((p) => p.items.map((it) => it.id)));
+    const ids = state.dlQueue.filter((id) => { const m = state.dlMeta.get(id); return m && m.auto && !m.done && !keep.has(id); });
+    if (autoSyncRunning) { autoSyncAgain = true; setTimeout(cancelAutoDl, 0); return; }
+    if (ids.length) await dlRemove(ids);
+    pumpDl();
+  }
+  async function toggleAutoDl() {
+    const name = state.openPl; if (!K12 || !name) return;
+    const names = autoNames(), on = names.includes(name);
+    store.set("autodl", on ? names.filter((n) => n !== name) : [...names, name]);
+    renderPlaylistDetail(); renderPlaylistList();
+    if (on) await cancelAutoDl(); else autoDlSync();
+  }
+  function autoWait() {
+    const n = state.dlQueue.filter((id) => { const m = state.dlMeta.get(id); return m && m.auto && !m.done; }).length;
+    const type = navigator.connection && navigator.connection.type;
+    dlLine(`저절로 받을 곡 ${n}곡 — ${type === "cellular" ? "와이파이를 기다려요" : "와이파이인지 알 수 없어 기다려요"}`);
+    const b = document.createElement("button"); b.textContent = "지금 받기";
+    b.onclick = () => { autoOverride = true; pumpDl(); };
+    el.dlProgress.append(" ", b);
+  }
   let dlStats = { added: 0, done: 0 };   // 이번에 줄에 넣은 곡 수 / 다 받은 곡 수 (진행 줄 "3/12곡")
 
   let dlDbP = null;
@@ -2286,14 +2343,15 @@
   }
 
   // 받기 줄에 넣기: 아직 안 받은 곡만 → 크기 합 + 여유 5%가 남은 자리보다 크면 받지 않고 알림 → 줄에 넣고 받기 시작
-  async function enqueueDl(tracks) {
+  async function enqueueDl(tracks, options = {}) {
+    const auto = !!options.auto;
     await loadDl();
     if (state.dlOk === false) { toast(DL_NO); dlLine(DL_NO, true); return; }
     if (state.offline || !navigator.onLine) { toast("인터넷이 있을 때 받을 수 있어요"); return; }
     askPersist();
     const seen = new Set();
     let todo = tracks.filter((t) => t && !isDl(t.id) && !state.dlQueue.includes(t.id) && !dlPending.has(t.id) && !seen.has(t.id) && seen.add(t.id));
-    if (!todo.length) { toast(tracks.length ? "이미 받았거나 받는 중이에요" : "받을 곡이 없어요"); return; }
+    if (!todo.length) { if (!auto) toast(tracks.length ? "이미 받았거나 받는 중이에요" : "받을 곡이 없어요"); return; }
     try {
       const full = [];
       for (const t of todo) full.push(await dlFileInfo(t));
@@ -2305,6 +2363,7 @@
     // 자리 확인 (받기 시작보다 먼저)
     const need = todo.reduce((n, t) => n + Math.max(0, (Number(t.size) || 0) - ((state.dlMeta.get(t.id) || {}).got || 0)), 0) * 1.05;
     const free = await dlSpaceLeft();
+    if (auto && free != null && need > free) { dlLine("저절로 받기 실패 — 자리가 모자라요", true); if (!autoSpaceWarned) { toast("저절로 받기 실패 — 자리가 모자라요"); autoSpaceWarned = true; } return; }
     if (free != null && need > free) { showNoSpace(need, free); return; }
     try {
       for (const t of todo) {
@@ -2314,6 +2373,7 @@
           folderId: state.folder ? state.folder.id : "", got: 0, parts: 0, done: false, at: 0,
           tags: t.tags ? { ...t.tags } : fallbackTags(t),
         };
+        if (auto) m.auto = true;
         await dlPutMeta(m);
         state.dlMeta.set(t.id, m);
       }
@@ -2328,7 +2388,7 @@
     saveDlQueue(); saveDlList();
     if (!dlStats.added || dlStats.done >= dlStats.added) dlStats = { added: 0, done: 0 };
     dlStats.added += ids.length;
-    toast(`${ids.length}곡 받기 시작 (${fmtSize(need / 1.05)})`);
+    toast(auto ? `♥·늘 받아 두기 ${ids.length}곡 받기 시작` : `${ids.length}곡 받기 시작 (${fmtSize(need / 1.05)})`);
     paintDlAll();
     pumpDl();
   }
@@ -2348,10 +2408,16 @@
     dlRunning = true;
     try {
       while (state.dlQueue.length) {
+        if (K12 && !autoNetOk() && !autoOverride) {
+          const manual = state.dlQueue.findIndex((id) => { const m = state.dlMeta.get(id); return !m || m.done || !m.auto; });
+          if (manual < 0) { autoWait(); return; }
+          if (manual > 0) { state.dlQueue.unshift(state.dlQueue.splice(manual, 1)[0]); saveDlQueue(); }
+        }
         const id = state.dlQueue[0];
         const m = state.dlMeta.get(id);
         if (!m || m.done) { state.dlQueue.shift(); saveDlQueue(); continue; }
         const left = state.dlQueue.length;
+        if (K12 && (state.offline || !state.folder || state.folder.id !== "k12")) { dlLine("k12 연결을 기다려요"); return; }
         if (!navigator.onLine) { dlLine(`인터넷이 없어 받기를 쉬어요 — ${left}곡 남음 (인터넷이 돌아오면 이어 받아요)`); return; }
         if (!K12) if (!tokenValid() && (!state.token || document.visibilityState !== "visible")) {
           dlLine(state.token ? `받기 쉼 — 앱을 다시 열면 이어 받아요 (${left}곡 남음)` : `받기 쉼 — 로그인하면 이어 받아요 (${left}곡 남음)`);
@@ -2380,7 +2446,7 @@
       }
       if (dlStats.done) toast(`받기 끝 — ${dlStats.done}곡을 폰에 받아 뒀어요`);
       dlStats = { added: 0, done: 0 };
-      dlLine("");
+      dlLine(""); autoOverride = false;
     } finally {
       dlRunning = false;
     }
@@ -2496,7 +2562,7 @@
       const t = dlTrackOf(m.id) || { id: m.id, name: m.name, title: stripExt(m.name), size: m.size, folderName: m.folderName, tags: m.tags };
       const r = trackRow(t, i, {
         playing: !!cur && cur.id === m.id,
-        sub: [fmtSize(m.done ? m.got : m.size), m.folderName, m.done ? "" : "받는 중"].filter(Boolean).join(" · "),
+        sub: [fmtSize(m.done ? m.got : m.size), m.folderName, m.done ? "" : "받는 중", m.auto ? "저절로" : ""].filter(Boolean).join(" · "),
         onPlay,
       });
       const x = document.createElement("button");
@@ -3013,10 +3079,13 @@
     checkResume();
     if (!K12) scheduleTokenRefresh();   // 뒤에 있던 동안 못 받은 열쇠를 앞에서 다시
     renewNext();              // 새 열쇠로 다음 곡 주소도
+    autoDlSync();
     pumpDl();                 // 뒤에서 쉬던 받기를 이어서
   });
   window.addEventListener("offline", goOffline);
   window.addEventListener("online", goOnline);
+  window.addEventListener("online", autoDlSync);
+  if (navigator.connection && navigator.connection.addEventListener) navigator.connection.addEventListener("change", () => { autoOverride = false; autoDlSync(); pumpDl(); });
   window.addEventListener("pageshow", checkResume);
   window.addEventListener("pagehide", saveResume);
 
@@ -3205,6 +3274,7 @@
   // 받아 두기: 묶음 안·플레이리스트 상세의 [↓ 받기], 받은 곡 화면, 오프라인 안내 줄의 [로그인], 로그인 화면의 "받아 둔 곡 듣기"
   el.btnLibDl.onclick = () => dlChipClick(el.btnLibDl);
   el.btnPlDl.onclick = () => dlChipClick(el.btnPlDl);
+  el.btnPlAuto.onclick = toggleAutoDl;
   el.btnDlPlay.onclick = () => playDl(false);
   el.btnDlShuffle.onclick = () => playDl(true);
   el.btnDlClear.onclick = confirmDlClear;
@@ -3253,10 +3323,11 @@
       const data = await response.json();
       if (!Array.isArray(data.tracks)) throw new Error("곡 목록 오류");
       state.offline = false; state.onlineLib = null; state.folder = { id: "k12", name: "k12" };
+      state.library = data.tracks.map((t) => ({ ...t, title: stripExt(t.name) }));
       setOfflineNote(""); notice(""); await Promise.all([loadTagDb(), loadPlaylists()]);
       show(el.sTracks); el.hdrSub.textContent = "k12"; el.tracksTitle.textContent = "k12";
       showTab("lib"); setLibrary(data.tracks.map((t) => ({ ...t, title: stripExt(t.name) })));
-      scanTags(); pumpDl();
+      autoDlSync(); scanTags(); pumpDl();
     } catch (e) {
       await loadDl();
       if (dlDoneList().length) { startOffline("k12"); el.offlineText.textContent = "k12 에 닿지 않아요 — 받은 곡만 보여요"; el.btnOfflineLogin.classList.remove("hidden"); }
