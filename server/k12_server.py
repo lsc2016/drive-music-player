@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import re
 import sys
+import tempfile
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
@@ -26,6 +28,40 @@ def music_root(paths_file=None):
         raise ValueError("MUSIC_ROOT가 없거나 음악 폴더가 존재하지 않습니다")
     return Path(value).resolve()
 
+DATA_FILES = {"playlists": "drive-music-playlists.md", "library": "drive-music-library.md"}
+DATA_LOCK = threading.Lock()
+MAX_DATA = 10 * 1024 * 1024
+
+def read_data(root, name):
+    if name not in DATA_FILES: return 404, b"", None
+    path = root / ".드라이브뮤직" / DATA_FILES[name]
+    try:
+        with path.open("rb") as f:
+            body = f.read()
+            version = str(os.fstat(f.fileno()).st_mtime_ns)
+        return 200, body, version
+    except FileNotFoundError:
+        return 200, b"", "none"
+
+def write_data(root, name, body, match):
+    if name not in DATA_FILES: return 404, b"", None
+    if match is None: return 428, b"", None
+    if len(body) > MAX_DATA: return 413, b"", None
+    try: body.decode("utf-8")
+    except UnicodeDecodeError: return 400, b"", None
+    with DATA_LOCK:
+        _, current, version = read_data(root, name)
+        if match != version: return 409, current, version
+        directory = root / ".드라이브뮤직"
+        directory.mkdir(exist_ok=True)
+        fd, temp = tempfile.mkstemp(dir=directory, prefix=".tmp-")
+        try:
+            with os.fdopen(fd, "wb") as f: f.write(body)
+            os.replace(temp, directory / DATA_FILES[name])
+        finally:
+            if os.path.exists(temp): os.unlink(temp)
+        return read_data(root, name)
+
 class Handler(BaseHTTPRequestHandler):
     root = None
     def reply(self, status, body=b"", mime="text/plain; charset=utf-8", extra=None):
@@ -38,8 +74,25 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD": self.wfile.write(body)
     def do_HEAD(self): self.do_GET()
+    def do_PUT(self):
+        path = urlsplit(self.path).path
+        if not path.startswith("/api/data/"): return self.reply(404)
+        name = path[len("/api/data/"):]
+        if name not in DATA_FILES: return self.reply(404)
+        if self.headers.get("If-Match") is None: return self.reply(428)
+        try: length = int(self.headers.get("Content-Length", "-1"))
+        except ValueError: return self.reply(400)
+        if length < 0: return self.reply(400)
+        if length > MAX_DATA: return self.reply(413)
+        body = self.rfile.read(length)
+        if len(body) != length: return self.reply(400)
+        status, content, version = write_data(self.root, name, body, self.headers.get("If-Match"))
+        self.reply(status, content, extra={"ETag": version} if version else None)
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path.startswith("/api/data/"):
+            status, body, version = read_data(self.root, path[len("/api/data/"):])
+            return self.reply(status, body, extra={"ETag": version} if version else None)
         if path == "/api/tracks":
             tracks = []
             for p in sorted(self.root.rglob("*")):

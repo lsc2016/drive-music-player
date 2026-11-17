@@ -201,7 +201,6 @@
   // 오프라인 목록에선 드라이브에 쓰는 일(태그 고치기·플레이리스트 고치기)을 막음 — 나중에 올리면 드라이브 것과 엇갈려서
   const OFFLINE_NO_EDIT = "인터넷이 없어 지금은 못 고쳐요 — 받은 곡 듣기만 돼요";
   function offlineBlock() {
-    if (K12) { toast("k12 판에선 다음 단계에서 돼요"); return true; }
     if (!state.offline) return false;
     toast(OFFLINE_NO_EDIT);
     return true;
@@ -970,6 +969,7 @@
   // 묶음(들)의 모든 곡의 그 칸(아티스트/앨범/작곡가/장르)을 name으로. 앨범이면 앨범아티스트도 맞춤
   function retagGroups(kind, groups, name, albumArtist, how) {
     const tracks = groups.flatMap((g) => g.tracks);
+    if (K12 && tracks.some((t) => t.id.includes("|"))) { toast("이 곡은 이름에 | 가 있어 저장 못 해요"); return; }
     if (!tracks.length) return;
     const shownName = name || KINDS[kind].unknown;
     rememberUndo(how === "rename" ? `${KINDS[kind].label} 이름 바꾸기 → '${shownName}'` : `${KINDS[kind].label} ${groups.length}개 → '${shownName}'`);
@@ -1120,6 +1120,7 @@
     ["track", "트랙", null, "numeric"], ["year", "연도", null, "numeric"],
   ];
   function openTagForm(t) {
+    if (K12 && t.id.includes("|")) { toast("이 곡은 이름에 | 가 있어 저장 못 해요"); return; }
     if (offlineBlock()) return;
     fillDatalists();
     const g = t.tags || fallbackTags(t);
@@ -1346,7 +1347,6 @@
     el.viewPl.classList.toggle("hidden", which !== "pl");
     store.set("tab", which);
     markKindChips();
-    if (which === "pl" && K12) { el.plList.replaceChildren(); el.plEmpty.textContent = "k12 판에선 다음 단계에서 돼요"; el.plEmpty.classList.remove("hidden"); return; }
     if (which === "pl") renderPlaylistList();
   }
   // 칩 줄에서 켜진 칩: 플레이리스트를 보는 중이면 "플레이리스트", 아니면 보관함 분류
@@ -1375,7 +1375,7 @@
       const line = raw.trim();
       const h = line.match(/^##\s+(.+)$/);
       if (h) { cur = { name: h[1].trim(), items: [] }; out.push(cur); continue; }
-      const m = line.match(/^-\s+(.*?)\s*\|\s*([A-Za-z0-9_-]{10,})\s*(?:\|\s*(.*))?$/);
+      const m = line.match(K12 ? /^-\s+(.*?)\s*\|\s*([^|]+?)\s*(?:\|\s*(.*))?$/ : /^-\s+(.*?)\s*\|\s*([A-Za-z0-9_-]{10,})\s*(?:\|\s*(.*))?$/);
       if (m && cur) cur.items.push({ title: m[1], id: m[2], folderName: (m[3] || "").trim() });
     }
     return out;
@@ -1385,6 +1385,13 @@
     // 먼저 이 기기에 남은 복사본으로 바로 보여주고, 드라이브 것으로 덮어씀
     state.playlists = store.get("playlists", []);
     el.plSync.innerHTML = `<span class="spinner"></span>`;
+    if (K12) {
+      const r = await fetch("./api/data/playlists", { cache: "no-store" });
+      if (!r.ok) throw new Error("플레이리스트 읽기 실패");
+      state.plVer = r.headers.get("ETag"); state.playlists = parsePlaylists(await r.text());
+      store.set("playlists", state.playlists); el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
+      if (plShown()) renderPlaylistList(); if (state.openPl) renderPlaylistDetail(); updateFavUI(); return;
+    }
     const res = await driveFetch("/files", {
       q: `name = '${PL_FILE}' and trashed = false`, fields: "files(id, name, modifiedTime)", spaces: "drive", pageSize: "1", orderBy: "modifiedTime desc",
     });
@@ -1411,11 +1418,10 @@
     state.plSaveTimer = setTimeout(flushPlaylists, 1200);  // 연달아 고칠 때 한 번만 올림
   }
   async function flushPlaylists() {
-    if (K12) return;
-    if (!state.plDirty) return;
+    if (!state.plDirty || state.offline) return;
     state.plDirty = false;
     try {
-      if (!state.plFileId && !state.plLooked) {   // 처음 찾기가 실패했었음 → 새 파일을 만들기 전에 다시 찾아봄 (또 실패하면 아래 catch → 5초 뒤 다시)
+      if (!K12 && !state.plFileId && !state.plLooked) {   // 처음 찾기가 실패했었음 → 새 파일을 만들기 전에 다시 찾아봄 (또 실패하면 아래 catch → 5초 뒤 다시)
         const id = await findMd(PL_FILE);
         state.plLooked = true;
         if (id) {   // 드라이브에 있었음 → 그 파일에만 있는 플레이리스트는 살려서 같이 올림
@@ -1429,6 +1435,12 @@
       el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
       state.plFails = 0;
     } catch (e) {
+      if (K12 && e.status === 409) {
+        state.plVer = e.version; state.playlists = parsePlaylists(e.content); state.plDirty = false;
+        store.set("playlists", state.playlists); renderPlaylistList(); if (state.openPl) renderPlaylistDetail(); updateFavUI();
+        el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
+        toast("다른 기기에서 먼저 고쳐서 그걸 불러왔어요 — 방금 고친 건 다시 해 주세요"); return;
+      }
       state.plDirty = true;
       if (++state.plFails <= SAVE_RETRY_MAX) {
         el.plSync.textContent = "저장 실패 — 다시 시도함";
@@ -1451,7 +1463,15 @@
 
   // 드라이브에 .md 파일 올리기: 처음엔 새로 만들고(multipart), 그다음부턴 내용만 바꿈(PATCH)
   async function uploadMd(fileId, name, body) {
-    if (K12) return null;
+    if (K12) {
+      const kind = name === PL_FILE ? "playlists" : "library";
+      const key = kind === "playlists" ? "plVer" : "libVer";
+      if (!state[key]) throw new Error("저장 전 서버 판을 읽지 못했어요");
+      const r = await fetch(`./api/data/${kind}`, { method: "PUT", headers: { "Content-Type": "text/markdown; charset=utf-8", "If-Match": state[key] }, body, keepalive: true });
+      if (r.status === 409) { const e = new Error("충돌"); e.status = 409; e.version = r.headers.get("ETag"); e.content = await r.text(); throw e; }
+      if (!r.ok) throw new Error(`저장 실패: ${r.status}`);
+      state[key] = r.headers.get("ETag"); return fileId;
+    }
     if (fileId) {
       await driveFetch(`/files/${fileId}`, { uploadType: "media" },
         { method: "PATCH", upload: true, headers: { "Content-Type": "text/markdown" }, body });
@@ -1479,14 +1499,14 @@
     const coll = new Intl.Collator("ko", { numeric: true, sensitivity: "base" });
     const rows = [...state.tagDb.entries()].sort(([, a], [, b]) => coll.compare(a.folderName || "", b.folderName || "") ||
       (Number(a.tags.track) || 0) - (Number(b.tags.track) || 0) || coll.compare(a.tags.title || "", b.tags.title || ""));
-    for (const [id, e] of rows) lines.push(`- ${[id, ...LIB_COLS.map((k) => e.tags[k]), e.folderName, e.tags.language || "", ...(e.edited ? ["edited"] : [])].map(cell).join(" | ")}`);
+    for (const [id, e] of rows) if (!K12 || !id.includes("|")) lines.push(`- ${[id, ...LIB_COLS.map((k) => e.tags[k]), e.folderName, e.tags.language || "", ...(e.edited ? ["edited"] : [])].map(cell).join(" | ")}`);
     lines.push("");
     return lines.join("\n");
   }
   function parseLibrary(text) {
     const out = new Map();
     for (const raw of (text || "").split(/\r?\n/)) {
-      const m = raw.trim().match(/^-\s+([A-Za-z0-9_-]{10,})\s*\|(.*)$/);
+      const m = raw.trim().match(K12 ? /^-\s+([^|]+?)\s*\|(.*)$/ : /^-\s+([A-Za-z0-9_-]{10,})\s*\|(.*)$/);
       if (!m) continue;
       const p = m[2].split("|").map((x) => x.trim());
       if (p.length < 9) continue;
@@ -1506,8 +1526,13 @@
     tagDbLoading = (async () => {
       // 이 기기에 남은 복사본 먼저, 드라이브 것이 있으면 덮어씀
       for (const [id, e] of Object.entries(store.get("library", {}))) if (e && e.tags) state.tagDb.set(id, e);
-      if (K12) return;
       try {
+        if (K12) {
+          const r = await fetch("./api/data/library", { cache: "no-store" });
+          if (!r.ok) throw new Error("보관함 읽기 실패");
+          state.libVer = r.headers.get("ETag"); state.tagDb = parseLibrary(await r.text());
+          store.set("library", Object.fromEntries(state.tagDb)); return;
+        }
         const res = await driveFetch("/files", {
           q: `name = '${LIB_FILE}' and trashed = false`, fields: "files(id)", spaces: "drive", pageSize: "1", orderBy: "modifiedTime desc",
         });
@@ -1527,12 +1552,12 @@
   }
 
   async function flushLibrary() {
-    if (K12) { const obj = {}; for (const [id, e] of state.tagDb) obj[id] = e; store.set("library", obj); state.libDirty = false; return; }
+    if (state.offline) return;
     if (state.libSaving) { state.libAgain = true; return; }   // 올리는 중이면 끝난 뒤 한 번 더
     if (!state.libDirty) return;
     state.libSaving = true; state.libDirty = false;
     try {
-      if (!state.libFileId && !state.libLooked) {   // 처음 찾기가 실패했었음 → 새 파일을 만들기 전에 다시 찾아봄 (또 실패하면 아래 catch → 5초 뒤 다시)
+      if (!K12 && !state.libFileId && !state.libLooked) {   // 처음 찾기가 실패했었음 → 새 파일을 만들기 전에 다시 찾아봄 (또 실패하면 아래 catch → 5초 뒤 다시)
         const id = await findMd(LIB_FILE);
         state.libLooked = true;
         if (id) {   // 드라이브에 있었음 → 여기 없는 곡과 앱에서 고친(edited) 값은 드라이브 것을 살림
@@ -1550,6 +1575,17 @@
       state.libFileId = await uploadMd(state.libFileId, LIB_FILE, serializeLibrary());
       state.libFails = 0;
     } catch (e) {
+      if (K12 && e.status === 409) {
+        let lost = false;
+        for (const [id, remote] of parseLibrary(e.content)) {
+          const local = state.tagDb.get(id);
+          if (!local || remote.edited) { if (local && local.edited && JSON.stringify(local) !== JSON.stringify(remote)) lost = true; state.tagDb.set(id, remote); }
+        }
+        state.libVer = e.version; store.set("library", Object.fromEntries(state.tagDb));
+        if (lost) toast("다른 기기에서 먼저 고친 태그를 불러왔어요 — 방금 고친 건 다시 해 주세요");
+        else console.info("다른 기기의 태그와 합쳤어요");
+        state.libDirty = true; state.libAgain = true; return;
+      }
       state.libDirty = true;
       if (++state.libFails <= SAVE_RETRY_MAX) {
         console.warn("보관함 저장 실패 — 다시 시도함", e);
@@ -1578,6 +1614,7 @@
   }
   function addToPlaylist(name, t) {
     if (offlineBlock()) return;
+    if (K12 && t.id.includes("|")) { toast("이 곡은 이름에 | 가 있어 저장 못 해요"); return; }
     const p = getPl(name) || createPlaylist(name);
     if (!p) return;
     if (p.items.some((it) => it.id === t.id)) return;
@@ -1699,6 +1736,7 @@
   const SVG_CHECK = `<svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
   function openSheet(t) {
     if (offlineBlock()) return;
+    if (K12 && t.id.includes("|")) { toast("이 곡은 이름에 | 가 있어 저장 못 해요"); return; }
     state.sheetTrack = t;
     el.sheetTrack.textContent = dispTitle(t);
     renderSheet();
@@ -1726,6 +1764,7 @@
   function toggleFav() {
     if (offlineBlock()) return;
     const t = currentTrack(); if (!t) return;
+    if (K12 && t.id.includes("|")) { toast("이 곡은 이름에 | 가 있어 저장 못 해요"); return; }
     if (inPlaylist(FAV, t.id)) { removeFromPlaylist(FAV, t.id); toast("즐겨찾기에서 뺐어요"); }
     else { addToPlaylist(FAV, t); toast("즐겨찾기에 담았어요"); }
     updateFavUI();
@@ -3214,7 +3253,7 @@
       const data = await response.json();
       if (!Array.isArray(data.tracks)) throw new Error("곡 목록 오류");
       state.offline = false; state.onlineLib = null; state.folder = { id: "k12", name: "k12" };
-      setOfflineNote(""); notice(""); await loadTagDb();
+      setOfflineNote(""); notice(""); await Promise.all([loadTagDb(), loadPlaylists()]);
       show(el.sTracks); el.hdrSub.textContent = "k12"; el.tracksTitle.textContent = "k12";
       showTab("lib"); setLibrary(data.tracks.map((t) => ({ ...t, title: stripExt(t.name) })));
       scanTags(); pumpDl();

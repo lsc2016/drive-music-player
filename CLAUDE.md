@@ -108,4 +108,4 @@
 
 ## k12 판 구조와 동작 방식
 
-`server/k12_server.py`는 표준 라이브러리로 음악 목록과 Range 파일을 제공한다. 서버가 index.html에 k12 meta를 삽입하면 같은 앱이 구글 로그인 없이 상대 API로 목록·음악을 읽고 태그 사본은 기기에 둔다. 다운로드와 오프라인 재생은 기존 IndexedDB 경로를 공유한다.
+`server/k12_server.py`는 표준 라이브러리로 음악 목록과 Range 파일을 제공한다. 서버가 index.html에 k12 meta를 삽입하면 같은 앱이 구글 로그인 없이 상대 API로 목록·음악을 읽고 플레이리스트와 태그는 `$MUSIC_ROOT/.드라이브뮤직/`의 .md 파일에 경로 ID로 저장한다. ETag는 파일 수정 시각이며 If-Match 충돌(409)에서는 서버 내용을 다시 읽는다. `server/k12_migrate.py`는 드라이브 사본을 기본 미리보기하고 `--do`로 옮긴다. 다운로드와 오프라인 재생은 기존 IndexedDB 경로를 공유한다.
