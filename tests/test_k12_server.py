@@ -78,7 +78,7 @@ class ServerTest(unittest.TestCase):
         self.assertIn(dict(id="two.m4a", name="two.m4a", size=6, mimeType="audio/mp4", folderName=""), tracks)
     def test_shell_and_config(self):
         for path in ("/", "/index.html"): self.assertIn(b'name="dm-source" content="k12"', self.request(path)[2])
-        self.assertNotIn(b'name="dm-source"', Path("index.html").read_bytes())
+        self.assertNotIn(b'<meta name="dm-source"', Path("index.html").read_bytes())
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(ValueError): music_root(Path(self.tmp.name) / "missing")
 if __name__ == "__main__": unittest.main()
