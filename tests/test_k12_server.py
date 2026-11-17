@@ -10,6 +10,12 @@ from http.server import ThreadingHTTPServer
 from server.k12_server import Handler, music_root, read_data, write_data
 
 class DataTest(unittest.TestCase):
+    def test_written_data_permissions(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertEqual(write_data(root, "library", b"data", "none")[0], 200)
+            self.assertEqual((root / ".드라이브뮤직" / "drive-music-library.md").stat().st_mode & 0o777, 0o664)
+
     def test_versions_and_atomic_write(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

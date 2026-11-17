@@ -57,6 +57,7 @@ def write_data(root, name, body, match):
         fd, temp = tempfile.mkstemp(dir=directory, prefix=".tmp-")
         try:
             with os.fdopen(fd, "wb") as f: f.write(body)
+            os.chmod(temp, 0o664)
             os.replace(temp, directory / DATA_FILES[name])
         finally:
             if os.path.exists(temp): os.unlink(temp)

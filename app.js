@@ -30,6 +30,8 @@
     dlProgress: $("dl-progress"), dlCount: $("dl-count"), dlInfo: $("dl-info"), dlGone: $("dl-gone"), dlGoneText: $("dl-gone-text"),
     btnDlRegain: $("btn-dl-regain"), btnDlForget: $("btn-dl-forget"), btnDlPlay: $("btn-dl-play"), btnDlShuffle: $("btn-dl-shuffle"),
     dlList: $("dl-list"), dlEmpty: $("dl-empty"), btnDlClear: $("btn-dl-clear"), btnLibDl: $("btn-lib-dl"), btnPlDl: $("btn-pl-dl"), btnPlAuto: $("btn-pl-auto"),
+    dataNote: $("data-note"), dataText: $("data-text"), btnDataRetry: $("btn-data-retry"),
+    loginTitle: $("login-title"), loginDesc: $("login-desc"),
     offlineNote: $("offline-note"), offlineText: $("offline-text"), btnOfflineLogin: $("btn-offline-login"), btnLoginDl: $("btn-login-dl"),
     tagKinds: $("tag-kinds"), tagsQ: $("tags-q"), tagList: $("tag-list"), tagsCount: $("tags-count"),
     viewLib: $("view-lib"), viewPl: $("view-pl"),
@@ -1382,14 +1384,30 @@
     return out;
   }
 
+  async function readK12Data(url) {
+    const controller = new AbortController();
+    let timer;
+    try {
+      return await Promise.race([
+        (async () => {
+          const r = await fetch(url, { cache: "no-store", signal: controller.signal });
+          if (!r.ok) throw new Error(`자료 읽기 실패: ${r.status}`);
+          return { text: await r.text(), version: r.headers.get("ETag") };
+        })(),
+        new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("자료 읽기 시간 초과")); }, 8000); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  }
+
   async function loadPlaylists() {
     // 먼저 이 기기에 남은 복사본으로 바로 보여주고, 드라이브 것으로 덮어씀
     state.playlists = store.get("playlists", []);
     el.plSync.innerHTML = `<span class="spinner"></span>`;
     if (K12) {
-      const r = await fetch("./api/data/playlists", { cache: "no-store" });
-      if (!r.ok) throw new Error("플레이리스트 읽기 실패");
-      state.plVer = r.headers.get("ETag"); state.playlists = parsePlaylists(await r.text());
+      let data;
+      try { data = await readK12Data("./api/data/playlists"); }
+      catch (e) { state.plVer = null; el.plSync.textContent = "못 읽음"; throw e; }
+      state.plVer = data.version; state.playlists = parsePlaylists(data.text);
       store.set("playlists", state.playlists); el.plSync.textContent = state.playlists.length ? `${state.playlists.length}개` : "";
       if (plShown()) renderPlaylistList(); if (state.openPl) renderPlaylistDetail(); updateFavUI(); autoDlSync(); return;
     }
@@ -1530,9 +1548,8 @@
       for (const [id, e] of Object.entries(store.get("library", {}))) if (e && e.tags) state.tagDb.set(id, e);
       try {
         if (K12) {
-          const r = await fetch("./api/data/library", { cache: "no-store" });
-          if (!r.ok) throw new Error("보관함 읽기 실패");
-          state.libVer = r.headers.get("ETag"); state.tagDb = parseLibrary(await r.text());
+          const data = await readK12Data("./api/data/library");
+          state.libVer = data.version; state.tagDb = parseLibrary(data.text);
           store.set("library", Object.fromEntries(state.tagDb)); return;
         }
         const res = await driveFetch("/files", {
@@ -1548,6 +1565,7 @@
       } catch (e) {
         console.warn("보관함 파일을 못 읽었어요", e);
         tagDbLoading = null;   // 다음에 폴더를 열 때 다시 시도
+        if (K12) { state.libVer = null; throw e; }
       }
     })();
     return tagDbLoading;
@@ -3314,25 +3332,57 @@
     else if (e.code === "ArrowLeft") el.audio.currentTime -= 10;
   });
 
+  let dataFailures = { playlists: false, library: false };
+  function paintDataNote() {
+    const messages = [];
+    if (dataFailures.playlists) messages.push("플레이리스트를 못 읽었어요 — 이 기기에 남은 것을 보여요");
+    if (dataFailures.library) messages.push("태그 보관함을 못 읽었어요 — 이 기기에 남은 것을 보여요");
+    el.dataText.textContent = messages.join(" · ");
+    el.dataNote.classList.toggle("hidden", !messages.length);
+  }
+  async function readK12Parts(playlists, library) {
+    const parts = [];
+    if (playlists) parts.push(["playlists", loadPlaylists()]);
+    if (library) parts.push(["library", loadTagDb()]);
+    const results = await Promise.allSettled(parts.map((part) => part[1]));
+    results.forEach((result, i) => {
+      const name = parts[i][0]; dataFailures[name] = result.status === "rejected";
+      if (dataFailures[name]) console.warn(`k12 ${name} 자료를 못 읽었어요`, result.reason);
+    });
+    paintDataNote();
+  }
+  el.btnDataRetry.onclick = async () => {
+    el.btnDataRetry.disabled = true; el.btnDataRetry.textContent = "다시 읽는 중…";
+    try {
+      await readK12Parts(dataFailures.playlists, dataFailures.library);
+      attachTags(); renderLib(); renderPlaylistList();
+      if (state.openPl) renderPlaylistDetail();
+    } finally { el.btnDataRetry.disabled = false; el.btnDataRetry.textContent = "다시"; }
+  };
+
   async function openK12() {
+    dataFailures = { playlists: false, library: false }; paintDataNote();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
+    let data;
     try {
       const response = await fetch("./api/tracks", { signal: controller.signal, cache: "no-store" });
       if (!response.ok) throw new Error("k12 연결 실패");
-      const data = await response.json();
-      if (!Array.isArray(data.tracks)) throw new Error("곡 목록 오류");
-      state.offline = false; state.onlineLib = null; state.folder = { id: "k12", name: "k12" };
-      state.library = data.tracks.map((t) => ({ ...t, title: stripExt(t.name) }));
-      setOfflineNote(""); notice(""); await Promise.all([loadTagDb(), loadPlaylists()]);
-      show(el.sTracks); el.hdrSub.textContent = "k12"; el.tracksTitle.textContent = "k12";
-      showTab("lib"); setLibrary(data.tracks.map((t) => ({ ...t, title: stripExt(t.name) })));
-      autoDlSync(); scanTags(); pumpDl();
+      data = await response.json();
+      if (!data || !Array.isArray(data.tracks)) throw new Error("곡 목록 오류");
     } catch (e) {
       await loadDl();
       if (dlDoneList().length) { startOffline("k12"); el.offlineText.textContent = "k12 에 닿지 않아요 — 받은 곡만 보여요"; el.btnOfflineLogin.classList.remove("hidden"); }
       else { show(el.sLogin); notice("k12 에 닿지 않아요. 받아 둔 곡이 없어서 틀 게 없어요"); el.btnLogin.classList.add("hidden"); el.btnLoginDl.textContent = "다시 연결"; el.btnLoginDl.classList.remove("hidden"); }
+      return;
     } finally { clearTimeout(timer); }
+    state.offline = false; state.onlineLib = null; state.folder = { id: "k12", name: "k12" };
+    state.library = data.tracks.map((t) => ({ ...t, title: stripExt(t.name) }));
+    setOfflineNote(""); notice(""); tagDbLoading = null;
+    await readK12Parts(true, true);
+    show(el.sTracks); el.hdrSub.textContent = "k12"; el.tracksTitle.textContent = "k12";
+    showTab("lib"); setLibrary(data.tracks.map((t) => ({ ...t, title: stripExt(t.name) })));
+    autoDlSync(); scanTags(); pumpDl();
   }
 
   // ── 시작 ──────────────────────────────────────────────────
@@ -3351,6 +3401,8 @@
       navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("[Drive Music] 오프라인 껍데기(sw.js) 등록 실패", e && e.message));
 
     if (K12) {
+      el.loginTitle.textContent = "k12 음악";
+      el.loginDesc.textContent = "k12 에 둔 음악을 받아 두고 들어요. 받은 곡은 인터넷 없이도 들려요.";
       el.btnLogin.classList.add("hidden"); el.btnOfflineLogin.textContent = "다시 연결";
       el.btnLoginDl.textContent = "다시 연결"; el.btnLoginDl.classList.remove("hidden"); el.btnLoginDl.onclick = openK12;
       loadDl().then(openK12); return;
